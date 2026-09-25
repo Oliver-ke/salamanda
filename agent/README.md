@@ -9,7 +9,11 @@ at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-micr
      Issues *read & write*, Metadata *read*. **Workflows: no access.**
    - No webhook. Install it on this repository only.
    - Note the App ID and the installation ID (from the installation URL). Generate a
-     private key and save it **outside the repo**, e.g. `~/.config/loop-sdlc/app.pem`.
+     private key and save it **outside the repo**, e.g. `~/.config/loop-sdlc/app.pem`,
+     then `chmod 600` it. Agent-run commands share the container as the `runner`
+     user; the worker refuses a key file that group or others can read. Instead of
+     mounting a file you can pass the key itself in `GITHUB_APP_PRIVATE_KEY` (the
+     worker strips `GITHUB_APP_*` from every agent-run command's environment).
    - The bot user id for `LOOP_GIT_AUTHOR_EMAIL`: `gh api /users/<app-slug>%5Bbot%5D --jq .id`.
 2. **Bedrock:** enable access to the model named in the spike findings, in that region.
 3. **Labels:**
@@ -44,7 +48,16 @@ docker run --rm \
   loop-worker /opt/agent-venv/bin/python -m loop_agent run --issue <N>
 ```
 Exit code 0 means a pull request was opened; the JSON line on stdout says what happened.
-Stop a run with Ctrl-C; nothing is pushed until verify and the guardrail check pass.
+Stop a run with Ctrl-C. A pull request is opened only when `npm run verify` and the
+guardrail check both pass. If verify still fails after the retries but the guardrail
+passes, the work in progress is pushed to its `agent/issue-N-…` branch for inspection,
+and no pull request is opened.
+
+## Serve
+`python -m loop_agent serve --port 8080` accepts one job over HTTP (`POST /jobs` with
+`{"repo", "issue", "sha"}`) and exits once that job has finished. That is the production
+model: one container (one MicroVM) per task, so nothing one job leaves behind reaches
+the next. Start a fresh container for every job.
 
 ## Tests
 `cd agent && uv run pytest -q`

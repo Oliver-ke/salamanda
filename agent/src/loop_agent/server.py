@@ -27,8 +27,11 @@ def parse_job(payload: object, expected_repo: str) -> Job:
 class JobServer:
     def __init__(self, handle: Callable[[Job], RunResult],
                  on_done: Callable[[Job, RunResult], None], expected_repo: str,
-                 host: str = "0.0.0.0", port: int = 8080):
+                 host: str = "0.0.0.0", port: int = 8080, once: bool = False):
         self.handle, self.on_done, self.expected_repo = handle, on_done, expected_repo
+        # once: one job per server lifetime (production runs one MicroVM per task,
+        # so nothing a job leaves behind can reach the next one).
+        self.once = once
         self._lock = threading.Lock()
         self._busy = False
         self._httpd = ThreadingHTTPServer((host, port), self._handler_class())
@@ -46,8 +49,12 @@ class JobServer:
         try:
             self.on_done(job, self.handle(job))
         finally:
-            with self._lock:
-                self._busy = False
+            if self.once:
+                # Stay busy: no second job slips in before the shutdown lands.
+                threading.Thread(target=self._httpd.shutdown, daemon=True).start()
+            else:
+                with self._lock:
+                    self._busy = False
 
     def _handler_class(self):
         server = self

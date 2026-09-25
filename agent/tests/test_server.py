@@ -89,3 +89,27 @@ def test_malformed_json_returns_400(server):
     with pytest.raises(urllib.error.HTTPError) as info:
         urllib.request.urlopen(req, timeout=5)
     assert info.value.code == 400
+
+
+def test_once_shuts_the_server_down_after_its_first_job():
+    done = []
+    srv = JobServer(lambda job: RunResult("pr_opened", "https://x/pull/1", "ok"),
+                    lambda job, result: done.append(job), expected_repo="o/r",
+                    host="127.0.0.1", port=0, once=True)
+    srv.start()
+    try:
+        assert post(srv.port, {"repo": "o/r", "issue": 7, "sha": SHA})[0] == 202
+        srv._thread.join(5)
+        assert not srv._thread.is_alive()
+        assert [job.issue for job in done] == [7]
+    finally:
+        srv.stop()
+
+
+def test_without_once_the_server_keeps_serving(server):
+    srv, release, done, finished = server
+    assert post(srv.port, {"repo": "o/r", "issue": 7, "sha": SHA})[0] == 202
+    release.set()
+    assert finished.wait(5)
+    srv._thread.join(0.3)
+    assert srv._thread.is_alive()

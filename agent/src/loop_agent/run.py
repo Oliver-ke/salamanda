@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .commands import CommandResult
+from .gitops import redact
 from .prompts import fix_prompt, pr_body, slugify, task_prompt
 from .toolbox import AgentOutcome, Toolbox
 
@@ -60,7 +61,7 @@ def run_job(job: Job, deps: Deps) -> RunResult:
     try:
         return _run(job, deps)
     except Exception as exc:  # report, never crash the server
-        detail = f"{type(exc).__name__}: {exc}"
+        detail = redact(f"{type(exc).__name__}: {exc}")
         try:
             deps.github.comment(job.issue, f"Agent run: **error**\n\n{detail}")
         except Exception:
@@ -70,7 +71,9 @@ def run_job(job: Job, deps: Deps) -> RunResult:
 
 def _run(job: Job, deps: Deps) -> RunResult:
     issue = deps.github.get_issue(job.issue)
-    branch = f"agent/issue-{issue.number}-{slugify(issue.title)}"
+    # Per attempt: a retry must never force-push over the branch of an earlier,
+    # possibly still open, pull request.
+    branch = f"agent/issue-{issue.number}-{slugify(issue.title)}-{job.sha[:7]}"
     deps.git.prepare(job.sha, branch)
     deps.ensure_deps()
     session = deps.agent.session(deps.make_toolbox(issue.number))

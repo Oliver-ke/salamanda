@@ -68,10 +68,10 @@ def test_happy_path_opens_one_pr_that_closes_the_issue():
     deps, pushed = make_deps(ScriptedAgent(FINISHED))
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "pr_opened" and result.pr_url.endswith("/pull/50")
-    assert deps.git.calls[0] == ("prepare", SHA, "agent/issue-7-add-expense-form")
-    assert pushed == ["agent/issue-7-add-expense-form"]
+    assert deps.git.calls[0] == ("prepare", SHA, "agent/issue-7-add-expense-form-aaaaaaa")
+    assert pushed == ["agent/issue-7-add-expense-form-aaaaaaa"]
     pr = deps.github.prs[0]
-    assert pr["head"] == "agent/issue-7-add-expense-form" and pr["base"] == "main"
+    assert pr["head"] == "agent/issue-7-add-expense-form-aaaaaaa" and pr["base"] == "main"
     assert pr["body"].startswith("Closes #7\n")
     assert deps.github.comments == [(7, "Opened https://github.com/o/r/pull/50")]
 
@@ -89,9 +89,9 @@ def test_verify_failing_after_retries_opens_no_pr_and_pushes_wip_only_if_guardra
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "verify_failed"
     assert deps.github.prs == []
-    assert pushed == ["agent/issue-7-add-expense-form"]
+    assert pushed == ["agent/issue-7-add-expense-form-aaaaaaa"]
     assert "still red" in deps.github.comments[-1][1]
-    assert "agent/issue-7-add-expense-form" in deps.github.comments[-1][1]
+    assert "agent/issue-7-add-expense-form-aaaaaaa" in deps.github.comments[-1][1]
 
 
 def test_verify_failing_with_guardrail_violation_pushes_nothing():
@@ -146,3 +146,22 @@ def test_failure_to_comment_on_the_error_path_does_not_raise():
     gh = FakeGitHub(issues={}, fail_comment=True)
     deps, _ = make_deps(ScriptedAgent(), gh=gh)
     assert run_job(Job("o/r", 7, SHA), deps).outcome == "error"
+
+
+def test_error_detail_is_redacted_in_the_comment_and_the_result():
+    class Leaky(FakeGitHub):
+        def get_issue(self, number):
+            raise RuntimeError("push to https://x-access-token:SECRET@github.com/o/r.git failed")
+
+    gh = Leaky()
+    deps, _ = make_deps(ScriptedAgent(), gh=gh)
+    result = run_job(Job("o/r", 7, SHA), deps)
+    assert result.outcome == "error" and "SECRET" not in result.detail
+    assert gh.comments and "SECRET" not in gh.comments[0][1]
+    assert "RuntimeError" in gh.comments[0][1]
+
+
+def test_branch_is_per_attempt_so_a_retry_never_touches_an_earlier_pr():
+    deps, pushed = make_deps(ScriptedAgent(FINISHED))
+    run_job(Job("o/r", 7, "1234567" + "f" * 33), deps)
+    assert pushed == ["agent/issue-7-add-expense-form-1234567"]

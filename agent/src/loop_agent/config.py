@@ -12,6 +12,18 @@ class ConfigError(Exception):
     pass
 
 
+def _read_key_file(path: Path) -> str:
+    """Agent-run commands share the container; a key they could read is theirs."""
+    try:
+        mode = path.stat().st_mode
+        if mode & 0o077:
+            raise ConfigError(f"GITHUB_APP_PRIVATE_KEY_FILE {path} is readable by group or "
+                              f"others (mode {mode & 0o777:o}); chmod 600 it")
+        return path.read_text()
+    except OSError as exc:
+        raise ConfigError(f"GITHUB_APP_PRIVATE_KEY_FILE {path} cannot be read: {exc}") from None
+
+
 @dataclass(frozen=True)
 class Config:
     repo: str
@@ -33,13 +45,19 @@ class Config:
         missing = [name for name in REQUIRED if not env.get(name)]
         key = env.get("GITHUB_APP_PRIVATE_KEY")
         if not key and env.get("GITHUB_APP_PRIVATE_KEY_FILE"):
-            key = Path(env["GITHUB_APP_PRIVATE_KEY_FILE"]).read_text()
+            key = _read_key_file(Path(env["GITHUB_APP_PRIVATE_KEY_FILE"]))
         if not key:
             missing.append("GITHUB_APP_PRIVATE_KEY (or GITHUB_APP_PRIVATE_KEY_FILE)")
         if missing:
             raise ConfigError(f"missing environment variables: {', '.join(missing)}")
         if not re.fullmatch(r"[\w.-]+/[\w.-]+", env["LOOP_REPO"]):
             raise ConfigError("LOOP_REPO must be owner/name")
+        if not env["LOOP_BOT_LOGIN"].endswith("[bot]"):
+            raise ConfigError("LOOP_BOT_LOGIN must be the App's bot login, ending in [bot]")
+        try:
+            max_tool_calls = int(env.get("LOOP_MAX_TOOL_CALLS", "60"))
+        except ValueError:
+            raise ConfigError("LOOP_MAX_TOOL_CALLS must be an integer") from None
         lock = env.get("LOOP_SNAPSHOT_LOCK_FILE")
         return cls(
             repo=env["LOOP_REPO"], repo_dir=Path(env["LOOP_REPO_DIR"]),
@@ -49,5 +67,5 @@ class Config:
             git_author_email=env["LOOP_GIT_AUTHOR_EMAIL"],
             snapshot_lock_file=Path(lock) if lock else None,
             command_user=env.get("LOOP_COMMAND_USER") or None,
-            max_tool_calls=int(env.get("LOOP_MAX_TOOL_CALLS", "60")),
+            max_tool_calls=max_tool_calls,
         )

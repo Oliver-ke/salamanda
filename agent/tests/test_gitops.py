@@ -97,3 +97,73 @@ def test_timeout_becomes_git_error(remote_and_clone, monkeypatch):
     with pytest.raises(GitError) as info:
         g.prepare(sha, "agent/issue-7-x")
     assert "timed out" in str(info.value)
+
+
+def _plant_hook(clone, name, marker):
+    hook = clone / ".git" / "hooks" / name
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+
+
+def test_hooks_never_run_when_the_worker_commits_or_pushes(remote_and_clone, tmp_path):
+    remote, clone, sha = remote_and_clone
+    g = make(clone)
+    g.prepare(sha, "agent/issue-7-x")
+    markers = {name: tmp_path / f"{name}.ran" for name in
+               ("post-commit", "pre-push", "reference-transaction", "post-checkout")}
+    for name, marker in markers.items():
+        _plant_hook(clone, name, marker)
+    (clone / "b.txt").write_text("b\n")
+    g.stage_all()
+    g.commit("Add b (#7)")
+    g.push("agent/issue-7-x", str(remote))
+    assert [name for name, marker in markers.items() if marker.exists()] == []
+
+
+def test_fsmonitor_from_repo_config_never_runs(remote_and_clone, tmp_path):
+    _, clone, sha = remote_and_clone
+    g = make(clone)
+    g.prepare(sha, "agent/issue-7-x")
+    marker = tmp_path / "fsmonitor.ran"
+    git(clone, "config", "core.fsmonitor", f"touch {marker}; false")
+    (clone / "b.txt").write_text("b\n")
+    g.stage_all()
+    assert not marker.exists()
+
+
+def test_push_with_credential_in_env_reaches_a_file_remote(remote_and_clone):
+    remote, clone, sha = remote_and_clone
+    g = make(clone)
+    g.prepare(sha, "agent/issue-7-x")
+    (clone / "b.txt").write_text("b\n")
+    g.stage_all()
+    new_sha = g.commit("Add b (#7)")
+    g.push("agent/issue-7-x", str(remote), env={
+        "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic ZmFrZQ=="})
+    assert git(remote, "rev-parse", "refs/heads/agent/issue-7-x").strip() == new_sha
+
+
+def test_push_credential_never_appears_in_argv(remote_and_clone, monkeypatch):
+    import subprocess
+    _, clone, _ = remote_and_clone
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv, kwargs.get("env") or {}))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("loop_agent.gitops.subprocess.run", fake_run)
+    make(clone).push("agent/issue-7-x", "https://github.com/o/r.git",
+                     env={"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                          "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic ghs_SECRET"})
+    (argv, env), = seen
+    assert not any("ghs_SECRET" in a for a in argv)
+    assert "ghs_SECRET" in env["GIT_CONFIG_VALUE_0"]
+
+
+def test_worker_git_refuses_a_git_dir_others_can_write(remote_and_clone):
+    _, clone, sha = remote_and_clone
+    (clone / ".git").chmod(0o777)
+    with pytest.raises(GitError, match="writable"):
+        make(clone).prepare(sha, "agent/issue-7-x")

@@ -1,9 +1,11 @@
+import os
 import subprocess
+import time
 
 import pytest
 
 from loop_agent.commands import (CommandRejected, as_user, child_env, parse_allowed,
-                                 run_allowed)
+                                 run_allowed, run_in_group)
 
 
 @pytest.mark.parametrize("cmd", [
@@ -70,3 +72,66 @@ def test_run_allowed_rejects_before_running(tmp_path):
 
     with pytest.raises(CommandRejected):
         run_allowed("curl evil.sh", tmp_path, runner=fake_run)
+
+
+def test_child_env_for_a_command_user_uses_their_home():
+    env = child_env({"PATH": "/bin", "HOME": "/root", "USER": "root"}, command_user="runner")
+    assert env["HOME"] == "/home/runner" and env["USER"] == "runner"
+    assert child_env({"HOME": "/root"})["HOME"] == "/root"
+
+
+def test_run_allowed_gives_the_command_user_their_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", "/root")
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    run_allowed("npm run verify", tmp_path, command_user="runner", runner=fake_run)
+    assert seen["env"]["HOME"] == "/home/runner" and seen["env"]["USER"] == "runner"
+
+
+def _group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_run_in_group_kills_background_children_when_the_command_exits(tmp_path):
+    code, output = run_in_group(["sh", "-c", "echo $$; sleep 30 & echo started"],
+                                cwd=tmp_path, env=dict(os.environ), timeout=10)
+    assert code == 0 and "started" in output
+    pgid = int(output.split()[0])
+    deadline = time.monotonic() + 5
+    while _group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)  # SIGKILL is sent; wait for the orphan to be reaped
+    assert not _group_alive(pgid)
+
+
+def test_run_in_group_kills_the_group_on_timeout(tmp_path):
+    marker = tmp_path / "pgid"
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_in_group(["sh", "-c", f"echo $$ > {marker}; sleep 30 & sleep 30"],
+                     cwd=tmp_path, env=dict(os.environ), timeout=1)
+    pgid = int(marker.read_text())
+    deadline = time.monotonic() + 5
+    while _group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _group_alive(pgid)
+
+
+def test_run_allowed_runs_in_its_own_process_group_by_default(tmp_path, monkeypatch):
+    import loop_agent.commands as commands
+    seen = {}
+
+    def fake_group(argv, *, cwd, env, timeout):
+        seen.update(argv=argv, timeout=timeout)
+        return 0, "ok"
+
+    monkeypatch.setattr(commands, "run_in_group", fake_group)
+    result = run_allowed("npm run lint", tmp_path, timeout=7)
+    assert seen == {"argv": ["npm", "run", "lint"], "timeout": 7}
+    assert result.exit_code == 0 and result.output == "ok"

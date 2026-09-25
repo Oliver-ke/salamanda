@@ -2,6 +2,8 @@ import hashlib
 import shutil
 import subprocess
 
+import pytest
+
 from loop_agent.checks import ensure_dependencies, run_pr_check
 
 from .conftest import REPO_ROOT, git
@@ -40,6 +42,46 @@ def test_ensure_dependencies_runs_without_snapshot(tmp_path):
     ensure_dependencies(tmp_path, None,
                         runner=lambda argv, **k: ran.append(argv) or subprocess.CompletedProcess(argv, 0))
     assert ran == [["npm", "ci"]]
+
+
+def test_ensure_dependencies_runs_as_the_command_user_with_their_home_and_a_timeout(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/root")
+    (tmp_path / "package-lock.json").write_text("{}")
+    seen = {}
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    ensure_dependencies(tmp_path, None, command_user="runner", runner=runner)
+    assert seen["env"]["HOME"] == "/home/runner" and seen["timeout"] == 900
+
+
+def test_ensure_dependencies_raises_on_failure_and_on_timeout(tmp_path):
+    (tmp_path / "package-lock.json").write_text("{}")
+    with pytest.raises(subprocess.CalledProcessError):
+        ensure_dependencies(tmp_path, None, runner=lambda argv, **k: subprocess.CompletedProcess(argv, 1))
+
+    def slow(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        ensure_dependencies(tmp_path, None, runner=slow)
+
+
+def test_pr_check_times_out_as_exit_124(tmp_path, monkeypatch):
+    root, base = _repo_with_harness(tmp_path)
+    real_run = subprocess.run
+
+    def run(argv, **kwargs):
+        if argv[0] == "node":
+            assert kwargs["timeout"] == 120
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr("loop_agent.checks.subprocess.run", run)
+    result = run_pr_check(root, base, "loop-sdlc[bot]", "Closes #7")
+    assert result.exit_code == 124 and "timed out after 120s" in result.output
 
 
 def _repo_with_harness(tmp_path):

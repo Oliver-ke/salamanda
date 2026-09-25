@@ -100,6 +100,13 @@ def test_error_status_raises_with_status(keypair):
     assert info.value.status == 422 and "Validation Failed" in str(info.value)
 
 
-def test_push_url_embeds_the_installation_token(keypair):
+def test_push_auth_keeps_the_token_out_of_the_url(keypair):
+    import base64
     c = client(keypair, lambda req: token_response())
-    assert c.push_url() == "https://x-access-token:ghs_abc@github.com/o/r.git"
+    url, env = c.push_auth()
+    assert url == "https://github.com/o/r.git" and "ghs_abc" not in url
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    scheme, encoded = env["GIT_CONFIG_VALUE_0"].removeprefix("AUTHORIZATION: ").split()
+    assert scheme == "basic" and base64.b64decode(encoded) == b"x-access-token:ghs_abc"
+    assert not hasattr(c, "push_url")

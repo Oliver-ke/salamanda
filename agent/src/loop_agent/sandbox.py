@@ -10,6 +10,7 @@ places the worker itself relies on (.git hooks run when the worker commits).
 # written later in the class body (e.g. on `search`).
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,9 +28,13 @@ class SandboxError(Exception):
 
 
 class Workspace:
-    def __init__(self, root: Path, protected: Sequence[str]):
+    def __init__(self, root: Path, protected: Sequence[str],
+                 owner: tuple[int, int] | None = None):
         self.root = root.resolve()
         self.protected = list(protected)
+        # The worker writes as root; files it creates are handed to the command
+        # user (uid, gid) so agent-run commands can change them like any other.
+        self.owner = owner
 
     def resolve(self, rel: str) -> Path:
         if not rel or rel.startswith("/") or "\\" in rel or "\0" in rel:
@@ -60,8 +65,16 @@ class Workspace:
         for candidate in {rel, self._rel(path)}:
             if is_protected(candidate, self.protected):
                 raise SandboxError(f"{candidate!r} is a protected path; the agent may not change it")
+        created = []
+        parent = path.parent
+        while not parent.exists():
+            created.append(parent)
+            parent = parent.parent
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        if self.owner is not None:
+            for made in [*reversed(created), path]:
+                os.chown(made, *self.owner)
 
     def _walk(self, rel: str):
         base = self.resolve(rel) if rel not in ("", ".") else self.root

@@ -1,5 +1,6 @@
 """GitHub REST as the loop's GitHub App: issues, comments, pull requests."""
 
+import base64
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,5 +88,12 @@ class GitHubAppClient:
                           json={"head": head, "base": base, "title": title, "body": body})
         return PullRequest(data["number"], data["html_url"])
 
-    def push_url(self) -> str:
-        return f"https://x-access-token:{self.installation_token()}@github.com/{self.repo}.git"
+    def push_auth(self) -> tuple[str, dict[str, str]]:
+        """Push URL plus the git environment that authenticates it. The token goes
+        in the environment, never the URL: argv is readable by every process."""
+        basic = base64.b64encode(f"x-access-token:{self.installation_token()}".encode()).decode()
+        return f"https://github.com/{self.repo}.git", {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+        }

@@ -105,3 +105,28 @@ def test_search_skips_symlink_into_git_dir(ws, repo):
     (repo / ".git" / "config").write_text("TOKENVALUE")
     os.symlink(repo / ".git" / "config", repo / "app/src/cfg")
     assert ws.search("TOKENVALUE") == []
+
+
+def test_write_chowns_the_file_and_every_directory_it_created(repo, monkeypatch):
+    calls = []
+    real_chown = os.chown
+
+    def chown(path, uid, gid):
+        calls.append((os.fspath(path), uid, gid))
+        real_chown(path, uid, gid)
+
+    monkeypatch.setattr("loop_agent.sandbox.os.chown", chown)
+    owner = (os.getuid(), os.getgid())
+    Workspace(repo, PROTECTED, owner=owner).write("app/src/lib/deep/x.ts", "x\n")
+    root = repo.resolve()
+    assert sorted(calls) == sorted([
+        (str(root / "app/src/lib"), *owner),
+        (str(root / "app/src/lib/deep"), *owner),
+        (str(root / "app/src/lib/deep/x.ts"), *owner),
+    ])
+
+
+def test_write_without_owner_never_chowns(repo, monkeypatch):
+    monkeypatch.setattr("loop_agent.sandbox.os.chown",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("chown")))
+    Workspace(repo, PROTECTED).write("app/src/new/x.ts", "x\n")

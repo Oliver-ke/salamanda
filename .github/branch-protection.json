@@ -1,7 +1,7 @@
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["verify", "pr-rules"]
+    "contexts": ["verify", "pr-rules", "agent"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {

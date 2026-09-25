@@ -79,3 +79,19 @@ jobs:
           git archive "origin/$BASE_REF" harness | tar -x -C "$RUNNER_TEMP/base-harness"
           node "$RUNNER_TEMP/base-harness/harness/src/cli/check-pr.mjs" \
             --base "origin/$BASE_REF" --author "$PR_AUTHOR"
+
+  agent:
+    name: agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@v6
+      - name: Python tests
+        run: uv run --frozen pytest -q

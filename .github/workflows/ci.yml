@@ -24,8 +24,6 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Validate task files
-        run: npm run tasks:validate
       - name: Typecheck, lint, test, build
         run: npm run verify
 
@@ -67,6 +65,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           if [ "$EVENT" != "pull_request" ]; then
             echo "pr-rules: not a pull request event ($EVENT) — nothing to check"

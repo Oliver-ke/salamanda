@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { checkPullRequest, TASK_ID_PATTERN } from '../index.mjs';
+import { checkPullRequest } from '../index.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -17,24 +17,11 @@ if (!values.author) {
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
 
-/** True when `path` exists at `ref`. Throws if git itself fails. */
-function existsAt(ref, path) {
-  return git('ls-tree', '--name-only', '-z', ref, '--', path)
-    .split('\0')
-    .some(Boolean);
-}
-
-/** File content at a ref, or null when the file genuinely does not exist there. */
-function showOrNull(ref, path) {
-  if (!existsAt(ref, path)) return null;
-  return git('show', `${ref}:${path}`);
-}
-
 try {
   const mergeBase = git('merge-base', values.base, 'HEAD').trim();
   // `--no-renames` is load-bearing: with rename detection on (git's default)
   // a rename reports only its DESTINATION, so `git mv CLAUDE.md
-  // tasks/notes-for-later.md` looks like an unrelated addition and the
+  // notes/for-later.md` looks like an unrelated addition and the
   // protected-path rule never fires — the agent could move its own rules file,
   // or the human-written acceptance tests, out of the way. With the flag, git
   // reports the deletion of the source and the addition of the destination as
@@ -45,18 +32,13 @@ try {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const taskChanges = changedFiles
-    .filter((file) => file.startsWith('tasks/'))
-    .flatMap((file) => {
-      const id = TASK_ID_PATTERN.exec(file.slice('tasks/'.length))?.[1];
-      if (!id) return [];
-      return [{ id, before: showOrNull(mergeBase, file), after: showOrNull('HEAD', file) }];
-    });
-
+  // The body comes from the environment, not a flag: CI runs the BASE
+  // branch's copy of this script, and an older copy's strict parseArgs would
+  // crash on an unknown flag. An environment variable is ignored by old copies.
   const { enforced, violations } = checkPullRequest({
     author: values.author,
     changedFiles,
-    taskChanges,
+    body: process.env.PR_BODY ?? '',
   });
 
   if (!enforced) {

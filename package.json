@@ -13,9 +13,6 @@
     "test:app": "npm run test --workspace app",
     "build": "npm run build --workspace app",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "tasks:validate": "node harness/src/cli/validate-tasks.mjs",
-    "tasks:next": "node harness/src/cli/select-task.mjs",
-    "tasks:status": "node harness/src/cli/set-status.mjs",
     "pr:check": "node harness/src/cli/check-pr.mjs"
   }
 }

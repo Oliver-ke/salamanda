@@ -1,4 +1,4 @@
-import { parseTaskFile } from './task-file.mjs';
+import { closedIssuesFrom } from './pr-claim.mjs';
 import { isProtectedPath } from './protected.mjs';
 
 const DEFAULT_BOT_AUTHORS = ['claude[bot]', 'github-actions[bot]'];
@@ -12,7 +12,7 @@ export function checkPullRequest(input) {
   // Every GitHub App login ends in "[bot]", so this fails CLOSED if the app
   // identity ever changes: an unrecognised bot is still enforced. Matching only
   // the hardcoded list would silently leave every pull request from, say,
-  // `loop-driver[bot]` unguarded and green.
+  // `loop-sdlc[bot]` unguarded and green.
   const isBot = bots.includes(input.author) || /\[bot\]$/.test(input.author);
   if (!isBot) {
     return { enforced: false, violations: [] };
@@ -27,101 +27,17 @@ export function checkPullRequest(input) {
     }
   }
 
-  const parsed = [];
-  for (const change of input.taskChanges) {
-    const before = safeParse(change.before, change.id);
-    const after = safeParse(change.after, change.id);
-    if (change.after !== null && after === null) {
-      add('task-status', `tasks/${change.id}: the new version could not be parsed as a task file`);
-      continue;
-    }
-    parsed.push({ id: change.id, before, after });
-  }
-
-  for (const { id, before, after } of parsed) {
-    if (before?.status === 'proposed' && after && after.status !== 'proposed') {
-      add(
-        'unapproved-task',
-        `tasks/${id}: only a human may move a task off "proposed" (tried to set "${after.status}")`,
-      );
-    }
-    if (before === null && after && after.status !== 'proposed') {
-      add(
-        'task-status',
-        `tasks/${id}: new task ${id} must be created with status "proposed", got "${after.status}"`,
-      );
-    }
-  }
-
-  const markedDone = parsed.filter(
-    ({ before, after }) => after?.status === 'done' && before?.status !== 'done',
-  );
-
-  if (parsed.length === 0) {
-    add('task-status', 'this pull request changes no task file — every run must record what it did');
-  } else if (markedDone.length > 1) {
+  // One run does one issue. The body links it with exactly one closing keyword,
+  // so merging the pull request closes that issue and nothing else.
+  const issues = closedIssuesFrom(input.body ?? '');
+  if (issues.length === 0) {
+    add('issue-link', 'the pull request body must contain "Closes #N" for the one issue this run did');
+  } else if (issues.length > 1) {
     add(
-      'task-status',
-      `marks more than one task done (${markedDone.map((t) => t.id).join(', ')}) — one task per run`,
+      'issue-link',
+      `closes more than one issue (${issues.map((n) => `#${n}`).join(', ')}) — one issue per run`,
     );
   }
 
-  for (const { id, after } of markedDone) {
-    if (after.doneWhen.length === 0) {
-      add(
-        'task-status',
-        `tasks/${id}: marked done with an empty "Done when" list — the done gate must not be vacuous`,
-      );
-      continue;
-    }
-    const unchecked = after.doneWhen.filter((item) => !item.checked);
-    if (unchecked.length > 0) {
-      add(
-        'task-status',
-        `tasks/${id}: marked done with ${unchecked.length} unchecked "Done when" item(s): ${unchecked
-          .map((item) => item.text)
-          .join('; ')}`,
-      );
-    }
-  }
-
-  for (const { id, before, after } of markedDone) {
-    if (!before) continue;
-    const texts = (task) => task.doneWhen.map((item) => item.text);
-    const wasText = texts(before);
-    const nowText = texts(after);
-    if (wasText.length !== nowText.length || wasText.some((text, i) => text !== nowText[i])) {
-      add(
-        'task-status',
-        `tasks/${id}: the "Done when" items were rewritten in the same pull request that marks the task done — only the checkboxes may change`,
-      );
-    }
-  }
-
-  // A deleted task file used to slip through everything: with `after === null`
-  // the "proposed" gate and the new-task rule are both skipped, while the
-  // deletion still counts as "changes a task file". That let a bot pull request
-  // clear the human approval queue, or satisfy "every run must record what it
-  // did" by deleting an unrelated task. Only a human may remove a task file.
-  // Kept as its own loop after the others so the violation ordering the tests
-  // above rely on is undisturbed.
-  for (const { id, before, after } of parsed) {
-    if (before !== null && after === null) {
-      add(
-        'task-status',
-        `tasks/${id}: a task file may not be deleted by ${input.author} — only a human may remove a task`,
-      );
-    }
-  }
-
   return { enforced: true, violations };
-}
-
-function safeParse(text, id) {
-  if (text === null || text === undefined) return null;
-  try {
-    return parseTaskFile(text, id);
-  } catch {
-    return null;
-  }
 }

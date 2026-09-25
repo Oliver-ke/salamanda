@@ -2,27 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { checkPullRequest, isProtectedPath } from '../src/index.mjs';
 
-const taskText = ({ status = 'open', done = ['- [x] it works'] } = {}) =>
-  [
-    '# A task',
-    '',
-    `Status: ${status}`,
-    'Priority: high',
-    'Feature: demo',
-    'Depends on: none',
-    '',
-    '## Goal',
-    'Do the thing.',
-    '',
-    '## Done when',
-    ...done,
-    '',
-  ].join('\n');
-
 const bot = (overrides) => ({
   author: 'claude[bot]',
   changedFiles: ['app/src/app/page.tsx'],
-  taskChanges: [{ id: '0001', before: taskText(), after: taskText({ status: 'done' }) }],
+  body: 'Closes #7\n\nAdds the expense form.',
   ...overrides,
 });
 
@@ -43,10 +26,11 @@ describe('isProtectedPath', () => {
     assert.equal(isProtectedPath('app/AGENTS.md'), true);
   });
 
-  it('leaves app source and tasks writable', () => {
-    assert.equal(isProtectedPath('app/src/lib/tasks.ts'), false);
-    assert.equal(isProtectedPath('app/src/lib/tasks.test.ts'), false);
-    assert.equal(isProtectedPath('tasks/0007-new-task.md'), false);
+  it('leaves app source writable and protects the agent runner', () => {
+    assert.equal(isProtectedPath('app/src/lib/expenses.ts'), false);
+    assert.equal(isProtectedPath('app/src/lib/expenses.test.ts'), false);
+    assert.equal(isProtectedPath('agent/src/loop_agent/run.py'), true);
+    assert.equal(isProtectedPath('agent/prompt.md'), true);
   });
 
   it('does not match a path that merely starts with a protected name', () => {
@@ -118,12 +102,13 @@ describe('isProtectedPath', () => {
   });
 });
 
+
 describe('checkPullRequest', () => {
   it('does not enforce anything for a human author', () => {
     const result = checkPullRequest({
       author: 'Oliver-ke',
-      changedFiles: ['.github/workflows/ci.yml', 'harness/src/select.mjs'],
-      taskChanges: [],
+      changedFiles: ['.github/workflows/ci.yml', 'harness/src/pr-rules.mjs'],
+      body: '',
     });
     assert.equal(result.enforced, false);
     assert.deepEqual(result.violations, []);
@@ -131,13 +116,10 @@ describe('checkPullRequest', () => {
 
   it('enforces the rules for an unrecognised [bot] author', () => {
     const result = checkPullRequest(
-      bot({ author: 'someother[bot]', changedFiles: ['harness/src/pr-rules.mjs'] }),
+      bot({ author: 'loop-sdlc[bot]', changedFiles: ['harness/src/pr-rules.mjs'] }),
     );
     assert.equal(result.enforced, true);
-    assert.deepEqual(
-      result.violations.map((v) => v.rule),
-      ['protected-path'],
-    );
+    assert.deepEqual(result.violations.map((v) => v.rule), ['protected-path']);
   });
 
   it('does not enforce anything for a human login that is not in the bot list', () => {
@@ -145,154 +127,46 @@ describe('checkPullRequest', () => {
       bot({ author: 'some-contributor', changedFiles: ['harness/src/pr-rules.mjs'] }),
     );
     assert.equal(result.enforced, false);
-    assert.deepEqual(result.violations, []);
-  });
-
-  it('rejects a bot pull request that deletes a task file', () => {
-    const result = checkPullRequest(
-      bot({
-        changedFiles: ['tasks/0007-someone-elses-idea.md'],
-        taskChanges: [
-          { id: '0007', before: taskText({ status: 'proposed' }), after: null },
-        ],
-      }),
-    );
-    assert.equal(result.enforced, true);
-    assert.deepEqual(
-      result.violations.map((v) => v.rule),
-      ['task-status'],
-    );
-    assert.match(result.violations[0].message, /tasks\/0007: a task file may not be deleted/);
   });
 
   it('passes a clean bot pull request', () => {
-    const result = checkPullRequest(bot());
-    assert.equal(result.enforced, true);
-    assert.deepEqual(result.violations, []);
+    assert.deepEqual(checkPullRequest(bot()), { enforced: true, violations: [] });
   });
 
-  it('rejects a bot pull request touching a protected path', () => {
-    const result = checkPullRequest(
-      bot({ changedFiles: ['app/src/app/page.tsx', '.github/workflows/loop.yml'] }),
-    );
-    assert.deepEqual(
-      result.violations.map((v) => v.rule),
-      ['protected-path'],
-    );
-    assert.match(result.violations[0].message, /\.github\/workflows\/loop\.yml/);
+  it('rejects a bot pull request touching a protected path, naming it', () => {
+    const result = checkPullRequest(bot({ changedFiles: ['app/src/x.ts', 'CLAUDE.md'] }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['protected-path']);
+    assert.match(result.violations[0].message, /CLAUDE\.md is a protected path/);
   });
 
-  it('rejects a bot pull request approving its own proposed task', () => {
-    const result = checkPullRequest(
-      bot({
-        taskChanges: [
-          {
-            id: '0007',
-            before: taskText({ status: 'proposed' }),
-            after: taskText({ status: 'open' }),
-          },
-        ],
-      }),
-    );
-    assert.deepEqual(
-      result.violations.map((v) => v.rule),
-      ['unapproved-task'],
-    );
+  it('rejects a bot pull request touching the agent runner', () => {
+    const result = checkPullRequest(bot({ changedFiles: ['agent/prompt.md'] }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['protected-path']);
   });
 
-  it('rejects a bot pull request that changes no task file', () => {
-    const result = checkPullRequest(bot({ taskChanges: [] }));
-    assert.deepEqual(
-      result.violations.map((v) => v.rule),
-      ['task-status'],
-    );
-    assert.match(result.violations[0].message, /no task file/);
+  it('rejects a bot pull request whose body closes no issue', () => {
+    const result = checkPullRequest(bot({ body: 'Adds the expense form. Related to #7.' }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['issue-link']);
+    assert.match(result.violations[0].message, /Closes #N/);
   });
 
-  it('rejects marking two tasks done in one pull request', () => {
-    const result = checkPullRequest(
-      bot({
-        taskChanges: [
-          { id: '0001', before: taskText(), after: taskText({ status: 'done' }) },
-          { id: '0002', before: taskText(), after: taskText({ status: 'done' }) },
-        ],
-      }),
-    );
-    assert.match(result.violations[0].message, /more than one task/);
+  it('rejects a bot pull request that closes two issues', () => {
+    const result = checkPullRequest(bot({ body: 'Closes #7\nCloses #8' }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['issue-link']);
+    assert.match(result.violations[0].message, /#7, #8/);
   });
 
-  it('rejects marking a task done with an unchecked done-when box', () => {
-    const result = checkPullRequest(
-      bot({
-        taskChanges: [
-          {
-            id: '0001',
-            before: taskText(),
-            after: taskText({ status: 'done', done: ['- [x] a', '- [ ] b'] }),
-          },
-        ],
-      }),
-    );
-    assert.match(result.violations[0].message, /unchecked "Done when"/);
+  it('accepts other closing keywords and a repeated mention of the same issue', () => {
+    assert.deepEqual(checkPullRequest(bot({ body: 'Fixes #7. (fixes #7)' })).violations, []);
   });
 
-  it('rejects marking a task done with an empty done-when list', () => {
-    const result = checkPullRequest(
-      bot({
-        taskChanges: [
-          {
-            id: '0001',
-            before: taskText(),
-            after: taskText({ status: 'done', done: [] }),
-          },
-        ],
-      }),
-    );
-    assert.match(result.violations[0].message, /empty "Done when" list/);
+  it('treats a missing body as closing no issue', () => {
+    const result = checkPullRequest(bot({ body: undefined }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['issue-link']);
   });
 
-  it('accepts the follow-up path: new proposed tasks and nothing marked done', () => {
-    const result = checkPullRequest(
-      bot({
-        changedFiles: ['tasks/0007-split-a.md', 'tasks/0008-split-b.md'],
-        taskChanges: [
-          { id: '0007', before: null, after: taskText({ status: 'proposed' }) },
-          { id: '0008', before: null, after: taskText({ status: 'proposed' }) },
-        ],
-      }),
-    );
-    assert.deepEqual(result.violations, []);
-  });
-
-  it('rejects a new task file that is not proposed', () => {
-    const result = checkPullRequest(
-      bot({
-        changedFiles: ['tasks/0007-split-a.md'],
-        taskChanges: [{ id: '0007', before: null, after: taskText({ status: 'open' }) }],
-      }),
-    );
-    assert.match(result.violations[0].message, /new task 0007 must be created with/);
-  });
-
-  it('reports an unparseable task file as a task-status violation', () => {
-    const result = checkPullRequest(
-      bot({ taskChanges: [{ id: '0001', before: taskText(), after: '# broken\n' }] }),
-    );
-    assert.match(result.violations[0].message, /could not be parsed/);
-  });
-
-  it('rejects marking a task done after rewriting the "Done when" items in the same pull request', () => {
-    const result = checkPullRequest(
-      bot({
-        taskChanges: [
-          {
-            id: '0001',
-            before: taskText({ done: ['- [ ] the original criterion'] }),
-            after: taskText({ status: 'done', done: ['- [x] a much easier criterion'] }),
-          },
-        ],
-      }),
-    );
-    assert.match(result.violations[0].message, /"Done when" items were rewritten/);
+  it('reports protected-path violations before the issue-link violation', () => {
+    const result = checkPullRequest(bot({ changedFiles: ['infra/main.tf'], body: '' }));
+    assert.deepEqual(result.violations.map((v) => v.rule), ['protected-path', 'issue-link']);
   });
 });

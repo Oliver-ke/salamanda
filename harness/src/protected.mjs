@@ -4,11 +4,12 @@
  * single extension (no "/" in it); everything else matches the exact
  * repo-relative path.
  *
- * `tasks/` is deliberately NOT here — the agent must be able to set a status to
- * done and file follow-up tasks. `app/src/` is not here either, including
- * colocated unit tests: the agent needs to write tests for the code it writes.
- * `app/tests/acceptance/` IS here, and that is the anti-cheating net — tests a
- * human wrote that the agent cannot weaken.
+ * `agent/` IS here: it is the agent's own runner — its prompt, its tool
+ * sandbox and the code that decides what reaches a pull request. An agent that
+ * can edit its runner can widen its own permissions. `app/src/` is not here,
+ * including colocated unit tests: the agent needs to write tests for the code
+ * it writes. `app/tests/acceptance/` IS here, and that is the anti-cheating net
+ * — tests a human wrote that the agent cannot weaken.
  *
  * ## Why config families are protected by stem, not by enumerated extension
  *
@@ -39,6 +40,7 @@ export const PROTECTED_PATHS = [
   '.github/',
   'infra/',
   'harness/',
+  'agent/',
   'app/tests/acceptance/',
   'CLAUDE.md',
   'CODEOWNERS',

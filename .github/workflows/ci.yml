@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # `edited`: a body edit changes what pr-rules checks (the issue link).
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 

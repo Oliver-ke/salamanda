@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 CREDENTIALS_IN_URL = re.compile(r"(https?://)[^/@\s]+@")
+GIT_TIMEOUT_S = 300
 
 
 class GitError(Exception):
@@ -16,13 +17,17 @@ def redact(text: str) -> str:
 
 
 class Git:
-    def __init__(self, repo_dir: Path, author_name: str, author_email: str):
+    def __init__(self, repo_dir: Path, author_name: str, author_email: str, timeout: int = GIT_TIMEOUT_S):
         self.repo_dir = repo_dir
         self.identity = ["-c", f"user.name={author_name}", "-c", f"user.email={author_email}"]
+        self.timeout = timeout
 
     def _git(self, *args: str) -> str:
-        proc = subprocess.run(["git", *self.identity, *args], cwd=self.repo_dir,
-                              capture_output=True, text=True)
+        try:
+            proc = subprocess.run(["git", *self.identity, *args], cwd=self.repo_dir,
+                                  capture_output=True, text=True, timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            raise GitError(redact(f"git {args[0]} timed out after {self.timeout}s"))
         if proc.returncode != 0:
             raise GitError(redact(f"git {args[0]} failed: {proc.stderr.strip()}"))
         return proc.stdout

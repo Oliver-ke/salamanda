@@ -83,3 +83,17 @@ def test_push_failure_redacts_credentials(remote_and_clone):
 def test_redact():
     assert redact("fatal: https://x-access-token:abc@github.com/o/r.git") == \
         "fatal: https://***@github.com/o/r.git"
+
+
+def test_timeout_becomes_git_error(remote_and_clone, monkeypatch):
+    import subprocess
+    _, clone, sha = remote_and_clone
+    g = Git(clone, author_name="loop-sdlc[bot]", author_email="1+loop-sdlc[bot]@users.noreply.github.com", timeout=1)
+
+    def mock_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["git", "fetch"], 1)
+
+    monkeypatch.setattr("loop_agent.gitops.subprocess.run", mock_run)
+    with pytest.raises(GitError) as info:
+        g.prepare(sha, "agent/issue-7-x")
+    assert "timed out" in str(info.value)

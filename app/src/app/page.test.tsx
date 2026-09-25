@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import Page from './page';
 
 describe('home page', () => {
-  it('renders the control room heading', () => {
+  it('renders the expense tracker heading', () => {
     render(<Page />);
-    expect(
-      screen.getByRole('heading', { name: /loop control room/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /expense tracker/i })).toBeInTheDocument();
+  });
+
+  it('says there are no expenses yet', () => {
+    render(<Page />);
+    expect(screen.getByText(/no expenses yet/i)).toBeInTheDocument();
   });
 });

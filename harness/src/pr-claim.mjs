@@ -1,14 +1,13 @@
+// GitHub's closing keywords: close/closes/closed, fix/fixes/fixed,
+// resolve/resolves/resolved, optionally followed by a colon.
+const CLOSING = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b/gi;
+
 /**
- * Which task, if any, an open pull request claims.
- * The canonical `Task: tasks/NNNN-slug.md` line that CLAUDE.md mandates is
- * authoritative; a loose `task NNNN` mention is only a fallback, because a body
- * may legitimately mention other tasks (follow-ups) before naming its own.
- * @param {string} text branch name and pull request body, concatenated
- * @returns {string | null} the four-digit task id
+ * Which issues a pull request body closes. A run does exactly one issue, and
+ * `pr-rules` requires exactly one entry here for a bot-authored pull request.
+ * @param {string} body pull request body
+ * @returns {number[]} distinct issue numbers, first-seen order
  */
-export function taskIdFrom(text) {
-  const match =
-    /\btasks\/(\d{4})-[a-z0-9-]+\.md\b/.exec(text) ??
-    /\btask[-/ ]?(\d{4})\b/i.exec(text);
-  return match ? match[1] : null;
+export function closedIssuesFrom(body) {
+  return [...new Set([...body.matchAll(CLOSING)].map((match) => Number(match[1])))];
 }

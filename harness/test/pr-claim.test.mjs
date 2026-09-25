@@ -1,52 +1,32 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { taskIdFrom } from '../src/pr-claim.mjs';
+import { closedIssuesFrom } from '../src/pr-claim.mjs';
 
-const text = (headRefName, body) => `${headRefName}\n${body}`;
-
-describe('taskIdFrom', () => {
-  it('reads the canonical Task: line', () => {
-    assert.equal(
-      taskIdFrom(text('claude/task-20260904-1310', 'Task: tasks/0002-backlog-board.md\n\nAdds the board.')),
-      '0002',
-    );
+describe('closedIssuesFrom', () => {
+  it('reads a Closes line', () => {
+    assert.deepEqual(closedIssuesFrom('Closes #7\n\nAdds the form.'), [7]);
   });
 
-  it('returns null when there is no task mention', () => {
-    assert.equal(taskIdFrom(text('claude/task-20260904-1310', '')), null);
+  it('accepts every GitHub closing keyword, any case, with or without a colon', () => {
+    for (const body of ['close #3', 'closes #3', 'Closed #3', 'fix #3', 'Fixes #3', 'fixed #3',
+      'resolve #3', 'Resolves #3', 'resolved #3', 'Closes: #3']) {
+      assert.deepEqual(closedIssuesFrom(body), [3], body);
+    }
   });
 
-  it('reads the canonical line even when the branch name also carries the id', () => {
-    assert.equal(
-      taskIdFrom(text('claude/task-0002-board', 'Task: tasks/0002-backlog-board.md')),
-      '0002',
-    );
+  it('ignores a bare mention that is not a closing keyword', () => {
+    assert.deepEqual(closedIssuesFrom('Follow-up to #12. See also #13.'), []);
   });
 
-  it('prefers the canonical line over an earlier loose mention of another task', () => {
-    assert.equal(
-      taskIdFrom(
-        text(
-          'claude/task-20260904-1310',
-          'Follow-up: task 0005 later.\n\nTask: tasks/0002-backlog-board.md',
-        ),
-      ),
-      '0002',
-    );
+  it('returns every distinct issue closed, in order, once each', () => {
+    assert.deepEqual(closedIssuesFrom('Closes #4, fixes #9, closes #4'), [4, 9]);
   });
 
-  it('falls back to a loose "task NNNN" mention when there is no canonical line', () => {
-    assert.equal(taskIdFrom(text('claude/task-20260904-1310', 'Implements task 0002.')), '0002');
+  it('does not match a keyword embedded in a longer word', () => {
+    assert.deepEqual(closedIssuesFrom('prefixes #5 and encloses #6'), []);
   });
 
-  it('reads the canonical line alongside an issue reference', () => {
-    assert.equal(
-      taskIdFrom(text('claude/task-20260904-1310', 'Closes #1234. Task: tasks/0003-task-detail-page.md')),
-      '0003',
-    );
-  });
-
-  it('returns null when branch and body mention nothing task-shaped', () => {
-    assert.equal(taskIdFrom(text('claude/misc', 'nothing here')), null);
+  it('returns [] for an empty body', () => {
+    assert.deepEqual(closedIssuesFrom(''), []);
   });
 });

@@ -11,3 +11,6 @@ coverage/
 terraform.tfstate
 terraform.tfstate.backup
 tfplan
+agent/.venv/
+__pycache__/
+.pytest_cache/

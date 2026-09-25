@@ -1,95 +1,73 @@
 # loop-sdlc
 
-An agent that runs on CI, does one small task per run, and opens a pull request.
+A closed loop that builds an app: a GitHub issue goes in, an AI agent in an isolated
+Lambda MicroVM does it, a pull request comes out, a human merges. Repeat.
+
+Design: `docs/superpowers/specs/2026-09-25-lambda-microvm-loop-design.md`.
 
 ## Layout
 | Path | What it is |
 |---|---|
-| `app/` | The Loop Control Room — a Next.js app that shows the backlog and run history |
-| `harness/` | `@loop/harness`: task file parser, selection rules, PR guardrails, agent prompt |
-| `tasks/` | The backlog. One markdown file per task |
-| `infra/` | Terraform for the sandbox AWS account. Plan-only; a human applies |
+| `app/` | The expense tracker — the Next.js app the agent builds |
+| `agent/` | The worker: Strands agent on Bedrock, its tool sandbox, and the code that opens the PR (Python) |
+| `harness/` | `@loop/harness`: the `pr-rules` guardrail CI runs on every pull request |
+| `infra/` | Terraform for the AWS side. Humans only: CI plans, a human applies |
+
+## The loop
+1. A human writes an issue and labels it `agent:ready`. That label is the approval.
+2. On a schedule, the intake Lambda queues the next eligible issue.
+3. A Step Functions run starts a MicroVM, the worker does the issue, and the MicroVM
+   is always terminated.
+4. On success the worker opens a pull request with `Closes #N`. On failure it comments
+   on the issue and opens nothing.
+5. A human reviews and merges. Nothing merges without `verify`, `pr-rules` and `agent` green.
+
+(Steps 2–3 land in Plan 2. Until then the worker runs locally — see `agent/README.md`.)
 
 ## Commands
 | Command | What it does |
 |---|---|
 | `npm run verify` | typecheck, lint, test, build — the definition of done |
-| `npm run tasks:validate` | every task file parses, ids unique, dependencies resolve |
-| `npm run tasks:next` | prints the task the next loop run would pick, and why it skipped the rest |
-| `npm run tasks:status -- open tasks/0006-*.md` | flips a task's status (this is how you approve a proposed task) |
-| `npm run pr:check -- --author <login>` | runs the PR guardrails against the current branch |
-
-## The loop
-`.github/workflows/loop.yml` runs on a schedule and on manual dispatch. Each run picks one
-eligible task, implements it, and opens a pull request. A human merges. Nothing merges
-without `verify` and `pr-rules` green.
+| `PR_BODY="Closes #1" npm run pr:check -- --author <login>` | runs the PR guardrails against the current branch |
 
 ## Reviewing an agent pull request
-Read the diff, then confirm the boxes it ticked are actually true. Two specific traps:
+Read the diff, then confirm it does what the issue asked. Two specific traps:
 
-- **A pull request showing *no* checks at all is itself the red flag.** `.github/` is protected
-  by the `pr-rules` check, but a change that breaks the workflow file's YAML stops the workflow
-  parsing, so no check runs get posted at all. Required checks then stay pending and the merge
-  button is blocked — unless someone reaches for the admin override. Never admin-merge a pull
-  request with missing or pending checks; that override exists only so a solo maintainer can
-  merge their own reviewed work.
-- **`verify` cannot see a weakened test.** The agent may write unit tests under `app/src/`, so
-  it can also weaken its own. Only `app/tests/acceptance/` is beyond its reach. Until those
-  acceptance tests exist, human review is the only thing catching a deleted assertion.
-
-## Stopping it
-```bash
-gh workflow disable loop.yml     # stops all future runs
-gh run cancel <run-id>           # stops the run in flight
-gh secret delete ANTHROPIC_API_KEY   # revokes the credential; runs then fail closed
-```
-Any one of these is sufficient. Deleting the secret is the hardest stop: the API key is
-scoped to its own Anthropic Console workspace, so revoking it there kills spend even if a
-workflow file survives somewhere.
-
-## Where the caps are
-| Cap | Where it lives |
-|---|---|
-| Turns per run | `--max-turns` in `loop.yml` |
-| Wall clock per run | `timeout-minutes` on the `loop` job |
-| One run at a time | `concurrency` in `loop.yml` |
-| Dollars per month | Anthropic Console → the `loop-sdlc` workspace's spend limit |
-| Runner minutes | GitHub billing → Actions spending limit |
+- **A pull request showing *no* checks at all is itself the red flag.** A change that
+  breaks a workflow file's YAML stops it parsing, so no check runs get posted and
+  required checks stay pending. Never admin-merge a pull request with missing or
+  pending checks.
+- **`verify` cannot see a weakened test.** The agent may write unit tests under
+  `app/src/`, so it can also weaken its own. Only `app/tests/acceptance/` is beyond its
+  reach. Until those exist, human review is the only thing catching a deleted assertion.
 
 ## What the agent may not change
-`.github/`, `infra/`, `harness/`, `app/tests/acceptance/`, `CLAUDE.md`, `CODEOWNERS`,
-`app/CLAUDE.md`, `app/AGENTS.md`, `package.json`, `package-lock.json`, `app/package.json`,
-`app/tsconfig.json`, `.nvmrc`, plus every extension of `app/vitest.config.*`,
-`app/vitest.setup.*`, `app/eslint.config.*`, `app/next.config.*` and
-`app/postcss.config.*` (`.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs` as each tool
-resolves them). **`harness/src/protected.mjs` is the authoritative list**; this
-paragraph and `CODEOWNERS` mirror it. Enforced by the required `pr-rules` check — not by
-CODEOWNERS review, which zero required approvals makes advisory. `app/CLAUDE.md` and
-`app/AGENTS.md` are on it because `create-next-app` generates them and Claude Code reads
-them every run alongside the root `CLAUDE.md`: any instruction file the agent can edit is
-one it can weaken.
+`.github/`, `infra/`, `harness/`, `agent/`, `app/tests/acceptance/`, `CLAUDE.md`,
+`CODEOWNERS`, `app/CLAUDE.md`, `app/AGENTS.md`, `package.json`, `package-lock.json`,
+`app/package.json`, `app/tsconfig.json`, `.nvmrc`, plus every extension of
+`app/vitest.config.*`, `app/vitest.setup.*`, `app/eslint.config.*`,
+`app/next.config.*` and `app/postcss.config.*`. **`harness/src/protected.mjs` is the
+authoritative list**; this paragraph and `CODEOWNERS` mirror it. It is enforced three
+times:
 
-Three properties of that enforcement are easy to lose in a refactor and worth knowing:
+1. **The worker's file tools** refuse these paths. This is defence in depth, not the
+   boundary.
+2. **The required `pr-rules` check** fails any bot pull request that touches one.
+   - The check also fails a bot PR that doesn't close exactly one issue.
+   - Config families are protected by stem, so an agent can't *add* a second config
+     that shadows a protected one.
+   - The diff runs with `--no-renames`, so moving a protected file counts as touching it.
+   - CI runs the checker from the **base** branch (`git archive`), so a pull request
+     can't supply its own judge.
+3. **The worker's GitHub App has no `workflows` permission,** so GitHub itself rejects
+   any bot push touching `.github/workflows/`. That closes the hole `pr-rules` alone
+   can't: a pull request editing `ci.yml` to make its own check pass.
 
-- **Extensions that do not exist yet are protected too.** Protecting only
-  `app/vitest.config.mts` would let the agent *add* an `app/vitest.config.ts` that drops
-  `tests/**` from `include`, so `app/tests/acceptance/` never runs and `verify` stays
-  green forever. A config the agent may add is a config it can use to shadow the one it
-  may not edit. Same for the ESLint, tsconfig and Next configs, and `.nvmrc` picks the
-  Node version both CI jobs run on.
-- **Renames and deletions count.** `check-pr.mjs` diffs with `--no-renames`, because with
-  git's default rename detection a `git mv CLAUDE.md tasks/notes.md` reports only the
-  destination and reads as an unrelated addition. Deleting a task file is a violation too:
-  otherwise the agent could clear the human approval queue, or satisfy "every run must
-  record what it did" by deleting an unrelated task.
-- **The checker comes from the base branch.** On a `pull_request` event the checkout is
-  the PR's merge ref, so running the checked-out `check-pr.mjs` would let a pull request
-  judge itself with its own rewritten `PROTECTED_PATHS`. The `pr-rules` job extracts
-  `harness/` from `origin/$BASE_REF` with `git archive` and runs that copy instead. One
-  consequence: a pull request is always judged by the rules on `main`, so a change to the
-  rules themselves only takes effect for pull requests opened after it merges.
-- **Still open, and not fixable in-repo:** a pull request can edit `.github/workflows/ci.yml`
-  itself — keep the YAML valid, keep the job named `pr-rules`, replace the step with
-  `exit 0` — and the required check goes green. For a `pull_request` event the workflow
-  definition comes from the pull request, so no in-repository check can close this. It has
-  to be closed outside the repo, by restricting what the loop's token may push.
+## Stopping it
+Plan 2 adds the AWS kill switches (disable the schedule, stop the Step Functions
+execution). Today, and always:
+
+```bash
+# Suspend the GitHub App installation (Settings → Integrations → GitHub Apps),
+# or delete its private key — every run then fails closed.
+```

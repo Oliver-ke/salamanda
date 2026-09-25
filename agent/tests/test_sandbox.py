@@ -90,3 +90,18 @@ def test_read_refuses_huge_files(ws, repo):
     (repo / "big.txt").write_text("x" * 300_000)
     with pytest.raises(SandboxError, match="too large"):
         ws.read("big.txt")
+
+
+def test_list_and_search_skip_symlink_escape(ws, repo, tmp_path):
+    outside = tmp_path / "secret.txt"
+    outside.write_text("TOPSECRET")
+    os.symlink(outside, repo / "app/src/leak.txt")
+    assert "app/src/leak.txt" not in ws.list(".")
+    assert ws.search("TOPSECRET") == []
+
+
+def test_search_skips_symlink_into_git_dir(ws, repo):
+    (repo / ".git").mkdir(exist_ok=True)
+    (repo / ".git" / "config").write_text("TOKENVALUE")
+    os.symlink(repo / ".git" / "config", repo / "app/src/cfg")
+    assert ws.search("TOKENVALUE") == []

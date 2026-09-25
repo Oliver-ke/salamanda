@@ -69,6 +69,16 @@ class Workspace:
             parts = path.relative_to(self.root).parts
             if SKIP_DIRS & set(parts) or not path.is_file():
                 continue
+            # A symlinked file's own repo-relative path can look innocuous
+            # (e.g. app/src/leak.txt) while its target escapes the repo or
+            # reaches into .git/ or node_modules/. Route every candidate
+            # through resolve() so list() and search() refuse it the same
+            # way read() and write() do, instead of silently following it.
+            rel_path = path.relative_to(self.root).as_posix()
+            try:
+                self.resolve(rel_path)
+            except SandboxError:
+                continue
             yield path
 
     def list(self, rel: str = ".") -> list[str]:

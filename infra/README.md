@@ -35,7 +35,12 @@ grep -vE '^(ANTHROPIC_API_KEY|GITHUB_APP_PRIVATE_KEY)' ~/.config/loop-sdlc/worke
 (cd agent && uv run python -m deploy.build_image --profile veroak \
   --bucket "$(terraform -chdir=../infra output -raw artifact_bucket)" \
   --build-role-arn "$(terraform -chdir=../infra output -raw build_role_arn)" --env-file /tmp/image.env)
+
+# Wake-ups from GitHub (agent:ready labels, merges to main)
+gh variable set AWS_WAKE_ROLE_ARN -R Oliver-ke/salamanda --body "$(terraform -chdir=infra output -raw wake_role_arn)"
 ```
+If the account already has a GitHub OIDC provider (`aws iam list-open-id-connect-providers`), set
+`github_oidc_provider_arn` to its ARN in `local.tfvars`: an account can hold only one.
 
 ## First run, by hand
 Send the job through the queue, as intake would, so the Pipe is exercised with someone watching.
@@ -63,8 +68,9 @@ Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var
 ## Stopping it (any one is enough)
 | Stop | Command |
 |---|---|
-| No new runs | `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=false` (or disable the schedule in the console) |
+| No new runs | `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=false`: disables the schedule *and* makes intake ignore GitHub wake-ups (disabling the schedule only in the console leaves wake-ups working) |
 | The run in flight | `aws stepfunctions stop-execution --execution-arn <arn>` (then `aws lambda-microvms terminate-microvm` if it was mid-run: stopping skips the finish step) |
+| Wake-ups only | `gh variable delete AWS_WAKE_ROLE_ARN -R Oliver-ke/salamanda` (polling continues) |
 | Everything, hard | Suspend the GitHub App installation, or revoke the Anthropic key: every run then fails closed |
 
 ## Where the caps are
@@ -72,6 +78,7 @@ Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var
 |---|---|
 | One intake at a time | intake Lambda reserved concurrency 1 (`intake_reserved_concurrency`); the schedule never retries |
 | One run at a time | intake refuses while an execution runs or an issue is `agent:queued`/`agent:running` |
+| Intake cadence | ticks every 2 min (`schedule_expression`, `intake_base_seconds`); while idle the wait doubles up to `intake_sleep_minutes` (default 32, after 4 idle ticks); `agent:ready` labels, merges to `main` and finished runs reset it (`.github/workflows/wake.yml`) |
 | Wall clock per run | 120 polls × 30 s in the state machine; `max_run_seconds` (4500 s) on the MicroVM itself |
 | Tool calls per run | `LOOP_MAX_TOOL_CALLS` (default 60) in the image env |
 | Model spend | the Anthropic Console spend limit on the key's workspace |

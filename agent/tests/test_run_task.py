@@ -335,3 +335,22 @@ def test_start_clears_the_requeue_marker():
     d, rec, _ = make()
     start(dict(EVENT), d)
     assert ("remove", 5, "agent:requeued") in rec.log
+
+
+def test_finish_resets_the_intake_backoff_last():
+    d, rec, _ = make()
+    d.reset_backoff = lambda: rec.log.append(("reset_backoff",))
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": {"outcome": "pr_opened"}}, d)
+    assert rec.log[0] == ("terminate", "mvm-1") and rec.log[-1] == ("reset_backoff",)
+
+
+def test_finish_survives_a_backoff_reset_failure():
+    d, rec, _ = make()
+
+    def boom():
+        raise RuntimeError("ssm down")
+
+    d.reset_backoff = boom
+    out = finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": {"outcome": "gave_up"}}, d)
+    assert out["outcome"] == "gave_up"
+    assert ("terminate", "mvm-1") in rec.log and ("add", 5, ("agent:too-big",)) in rec.log

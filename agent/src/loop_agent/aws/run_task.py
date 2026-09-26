@@ -25,6 +25,7 @@ class TaskDeps:
     max_duration_s: int
     http: Callable = field(default=http_json)
     sleep: Callable = field(default=time.sleep)
+    reset_backoff: Callable[[], None] = field(default=lambda: None)
 
 
 def start(event: dict, deps: TaskDeps) -> dict:
@@ -108,7 +109,23 @@ def finish(event: dict, deps: TaskDeps) -> dict:
         detail = redact(str(result.get("detail") or _why(event)))[:DETAIL_IN_COMMENT]
         gh.comment(issue, f"Agent run: **{outcome or 'error'}**\n\n{detail}\n\n"
                           "The MicroVM was terminated. Re-add `agent:ready` to retry.")
+    try:
+        deps.reset_backoff()  # a finished run may make the next issue eligible: check soon
+    except Exception as exc:
+        print(f"backoff: reset failed ({type(exc).__name__})")
     return {"issue": issue, "outcome": outcome or "error"}
+
+
+def _reset_backoff() -> None:  # pragma: no cover - AWS wiring
+    from datetime import datetime, timezone
+
+    import boto3
+
+    from .backoff import dump, reset
+
+    boto3.client("ssm").put_parameter(
+        Name=os.environ["BACKOFF_PARAMETER"], Type="String", Overwrite=True,
+        Value=dump(reset(datetime.now(timezone.utc), int(os.environ["INTAKE_BASE_SECONDS"]))))
 
 
 def _deps() -> TaskDeps:  # pragma: no cover - AWS wiring
@@ -123,7 +140,8 @@ def _deps() -> TaskDeps:  # pragma: no cover - AWS wiring
         microvms=MicroVMs(boto3.client("lambda-microvms", region_name=region), region),
         secrets=lambda: {"anthropic_api_key": secret(os.environ["ANTHROPIC_SECRET_ARN"]),
                          "github_app_private_key": secret(os.environ["GITHUB_KEY_SECRET_ARN"])},
-        image_arn=os.environ["IMAGE_ARN"], max_duration_s=int(os.environ["MAX_RUN_SECONDS"]))
+        image_arn=os.environ["IMAGE_ARN"], max_duration_s=int(os.environ["MAX_RUN_SECONDS"]),
+        reset_backoff=_reset_backoff)
 
 
 def start_handler(event, context):  # pragma: no cover - AWS wiring

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from . import backoff
 from .selection import (FAILED, OUTCOME_LABELS, QUEUED, READY, REQUEUED, RUNNING, closed_issues,
                         depends_on, select_issue)
 
@@ -83,13 +84,50 @@ def run_intake(deps: IntakeDeps) -> dict:
     return {"queued": number, "sha": sha, "reasons": reasons}
 
 
+@dataclass
+class TickDeps:
+    intake: IntakeDeps
+    load: Callable[[], str | None]
+    save: Callable[[str], None]
+    base_s: int
+    sleep_s: int
+    enabled: bool = True  # schedule_enabled=false is the kill switch; it stops wake-ups too
+
+
+def run_tick(event: dict | None, deps: TickDeps) -> dict:
+    """One scheduled tick or wake-up. Backoff errors never block intake: an
+    unreadable record counts as due, and a failed save is only logged."""
+    if not deps.enabled:
+        return {"skipped": True, "reason": "disabled"}
+    now = deps.intake.now()
+    woken = bool((event or {}).get("wake"))
+    try:
+        state = backoff.parse(deps.load())
+    except Exception as exc:  # fail open: check rather than sleep
+        print(f"backoff: read failed ({type(exc).__name__}); treating as due")
+        state = None
+    if state and state.next_at > now + timedelta(seconds=deps.sleep_s + backoff.TOLERANCE_S):
+        state = None  # a next_at beyond one sleep is a bad record (hand edit, clock skew): check now
+    if not woken and not backoff.due(state, now):
+        return {"skipped": True, "next_at": state.next_at.isoformat()}
+    result = run_intake(deps.intake)
+    work = result.get("queued") is not None
+    new = backoff.reset(now, deps.base_s) if (work or woken) else backoff.grow(state, now, deps.base_s, deps.sleep_s)
+    try:
+        deps.save(backoff.dump(new))
+    except Exception as exc:
+        print(f"backoff: write failed ({type(exc).__name__})")
+    return {**result, "woken": woken, "next_interval_s": new.interval_s}
+
+
 def handler(event, context):  # pragma: no cover - AWS wiring
     import boto3
 
     from .secrets import github_client
 
-    sfn, sqs = boto3.client("stepfunctions"), boto3.client("sqs")
+    sfn, sqs, ssm = boto3.client("stepfunctions"), boto3.client("sqs"), boto3.client("ssm")
     machine, queue = os.environ["STATE_MACHINE_ARN"], os.environ["QUEUE_URL"]
+    parameter = os.environ["BACKOFF_PARAMETER"]
 
     def running() -> int:
         return len(sfn.list_executions(stateMachineArn=machine, statusFilter="RUNNING",
@@ -99,6 +137,24 @@ def handler(event, context):  # pragma: no cover - AWS wiring
         sqs.send_message(QueueUrl=queue, MessageBody=json.dumps(message), MessageGroupId=message["repo"],
                          MessageDeduplicationId=f"{message['issue']}-{message['sha']}")
 
-    result = run_intake(IntakeDeps(github_client(), running, send, os.environ["LOOP_REPO"]))
+    def load() -> str | None:
+        return ssm.get_parameter(Name=parameter)["Parameter"]["Value"]
+
+    def save(raw: str) -> None:
+        ssm.put_parameter(Name=parameter, Value=raw, Type="String", Overwrite=True)
+
+    # Build the GitHub client lazily: a skipped tick must not even read the secret.
+    class LazyGitHub:
+        _client = None
+
+        def __getattr__(self, name):
+            if LazyGitHub._client is None:
+                LazyGitHub._client = github_client()
+            return getattr(LazyGitHub._client, name)
+
+    intake = IntakeDeps(LazyGitHub(), running, send, os.environ["LOOP_REPO"])
+    result = run_tick(event, TickDeps(intake, load, save, int(os.environ["INTAKE_BASE_SECONDS"]),
+                                      int(os.environ["INTAKE_SLEEP_SECONDS"]),
+                                      os.environ.get("LOOP_ENABLED", "true") == "true"))
     print(json.dumps(result))
     return result

@@ -51,5 +51,24 @@ variable "schedule_enabled" {
 
 variable "schedule_expression" {
   type    = string
-  default = "rate(15 minutes)"
+  default = "rate(2 minutes)"
 }
+
+variable "intake_base_seconds" {
+  type        = number
+  default     = 120
+  description = "Intake's shortest wait between checks; keep equal to the schedule interval"
+}
+
+variable "intake_sleep_minutes" {
+  type        = number
+  default     = 32
+  description = "Longest wait while idle: the wait doubles from the base each idle tick until it reaches this"
+}
+
+variable "github_oidc_provider_arn" {
+  type        = string
+  default     = null
+  description = "Existing token.actions.githubusercontent.com provider ARN, if the account already has one"
+}
+

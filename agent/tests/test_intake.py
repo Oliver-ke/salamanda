@@ -176,3 +176,80 @@ def test_second_stale_queued_claim_fails_instead_of_requeuing():
     comment = next(c[2] for c in gh.calls if c[0] == "comment")
     assert "queued twice" in comment and "dead-letter queue" in comment and "agent:ready" in comment
     assert sent == []
+
+
+from datetime import timedelta
+
+from loop_agent.aws.backoff import Backoff, dump, parse
+from loop_agent.aws.intake import TickDeps, run_tick
+
+
+def tick(gh, stored=None, running=0, fail_load=False, fail_save=False):
+    d, sent = deps(gh, running)
+    box = {"raw": stored}
+
+    def load():
+        if fail_load:
+            raise RuntimeError("ssm down")
+        return box["raw"]
+
+    def save(raw):
+        if fail_save:
+            raise RuntimeError("ssm down")
+        box["raw"] = raw
+
+    return TickDeps(d, load, save, 120, 1920), box, sent
+
+
+def test_not_due_skips_without_touching_github():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, box, sent = tick(gh, dump(Backoff(480, NOW + timedelta(minutes=5))))
+    out = run_tick({}, td)
+    assert out["skipped"] is True and sent == [] and gh.calls == []
+
+
+def test_wake_runs_even_when_not_due_and_resets():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, box, sent = tick(gh, dump(Backoff(1920, NOW + timedelta(minutes=30))))
+    out = run_tick({"wake": True}, td)
+    assert out["queued"] == 5 and parse(box["raw"]).interval_s == 120
+
+
+def test_idle_tick_doubles_the_wait():
+    gh = FakeGitHub()
+    td, box, _ = tick(gh, dump(Backoff(240, NOW - timedelta(seconds=1))))
+    run_tick({}, td)
+    assert parse(box["raw"]) == Backoff(480, NOW + timedelta(seconds=480))
+
+
+def test_in_flight_counts_as_idle():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(6)]})
+    td, box, sent = tick(gh, None, running=1)
+    run_tick({}, td)
+    assert sent == [] and parse(box["raw"]).interval_s == 240
+
+
+def test_queuing_resets_to_base():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, box, _ = tick(gh, dump(Backoff(960, NOW - timedelta(seconds=1))))
+    run_tick({}, td)
+    assert parse(box["raw"]).interval_s == 120
+
+
+def test_woken_but_nothing_eligible_still_resets():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(6, "Depends on: #5")]}, states={5: "open"})
+    td, box, _ = tick(gh, dump(Backoff(1920, NOW + timedelta(minutes=20))))
+    run_tick({"wake": True}, td)
+    assert parse(box["raw"]).interval_s == 120
+
+
+def test_unreadable_state_still_runs_intake():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, _, sent = tick(gh, fail_load=True)
+    assert run_tick({}, td)["queued"] == 5 and len(sent) == 1
+
+
+def test_save_failure_does_not_break_the_tick():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, _, sent = tick(gh, fail_save=True)
+    assert run_tick({}, td)["queued"] == 5

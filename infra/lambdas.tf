@@ -112,6 +112,7 @@ resource "aws_lambda_function" "intake" {
       BACKOFF_PARAMETER    = aws_ssm_parameter.intake_backoff.name
       INTAKE_BASE_SECONDS  = tostring(var.intake_base_seconds)
       INTAKE_SLEEP_SECONDS = tostring(var.intake_sleep_minutes * 60)
+      LOOP_ENABLED         = tostring(var.schedule_enabled)
     })
   }
 }

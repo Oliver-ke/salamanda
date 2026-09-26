@@ -253,3 +253,19 @@ def test_save_failure_does_not_break_the_tick():
     gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
     td, _, sent = tick(gh, fail_save=True)
     assert run_tick({}, td)["queued"] == 5
+
+
+def test_far_future_record_counts_as_due():
+    """A hand-edited or clock-skewed next_at beyond one sleep must not skip forever."""
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, box, sent = tick(gh, dump(Backoff(240, NOW + timedelta(days=3))))
+    assert run_tick({}, td)["queued"] == 5
+
+
+def test_disabled_loop_ignores_wake_ups():
+    """schedule_enabled=false is the documented kill switch: a wake must not start work."""
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5)]})
+    td, box, sent = tick(gh)
+    td.enabled = False
+    out = run_tick({"wake": True}, td)
+    assert out == {"skipped": True, "reason": "disabled"} and sent == [] and gh.calls == []

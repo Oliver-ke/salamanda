@@ -41,3 +41,7 @@ def test_grow_from_nothing_and_after_config_changes():
     assert grow(None, NOW, 120, 1920).interval_s == 240
     assert grow(Backoff(3840, NOW), NOW, 120, 1920).interval_s == 1920  # sleep lowered
     assert grow(Backoff(30, NOW), NOW, 120, 1920).interval_s == 240     # base raised
+
+
+def test_naive_timestamp_is_treated_as_corrupt():
+    assert parse('{"interval_s": 240, "next_at": "2026-09-26T12:00:00"}') is None

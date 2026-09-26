@@ -17,9 +17,11 @@ class Backoff:
 def parse(raw: str | None) -> Backoff | None:
     try:
         data = json.loads(raw)
-        return Backoff(int(data["interval_s"]), datetime.fromisoformat(data["next_at"]))
+        state = Backoff(int(data["interval_s"]), datetime.fromisoformat(data["next_at"]))
     except (TypeError, ValueError, KeyError):
         return None
+    # A timestamp without a timezone can't be compared with now: treat it as corrupt.
+    return state if state.next_at.tzinfo is not None else None
 
 
 def dump(b: Backoff) -> str:

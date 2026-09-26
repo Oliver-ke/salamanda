@@ -91,11 +91,14 @@ class TickDeps:
     save: Callable[[str], None]
     base_s: int
     sleep_s: int
+    enabled: bool = True  # schedule_enabled=false is the kill switch; it stops wake-ups too
 
 
 def run_tick(event: dict | None, deps: TickDeps) -> dict:
     """One scheduled tick or wake-up. Backoff errors never block intake: an
     unreadable record counts as due, and a failed save is only logged."""
+    if not deps.enabled:
+        return {"skipped": True, "reason": "disabled"}
     now = deps.intake.now()
     woken = bool((event or {}).get("wake"))
     try:
@@ -103,6 +106,8 @@ def run_tick(event: dict | None, deps: TickDeps) -> dict:
     except Exception as exc:  # fail open: check rather than sleep
         print(f"backoff: read failed ({type(exc).__name__}); treating as due")
         state = None
+    if state and state.next_at > now + timedelta(seconds=deps.sleep_s + backoff.TOLERANCE_S):
+        state = None  # a next_at beyond one sleep is a bad record (hand edit, clock skew): check now
     if not woken and not backoff.due(state, now):
         return {"skipped": True, "next_at": state.next_at.isoformat()}
     result = run_intake(deps.intake)
@@ -149,6 +154,7 @@ def handler(event, context):  # pragma: no cover - AWS wiring
 
     intake = IntakeDeps(LazyGitHub(), running, send, os.environ["LOOP_REPO"])
     result = run_tick(event, TickDeps(intake, load, save, int(os.environ["INTAKE_BASE_SECONDS"]),
-                                      int(os.environ["INTAKE_SLEEP_SECONDS"])))
+                                      int(os.environ["INTAKE_SLEEP_SECONDS"]),
+                                      os.environ.get("LOOP_ENABLED", "true") == "true"))
     print(json.dumps(result))
     return result

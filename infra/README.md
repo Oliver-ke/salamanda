@@ -68,7 +68,7 @@ Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var
 ## Stopping it (any one is enough)
 | Stop | Command |
 |---|---|
-| No new runs | `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=false` (or disable the schedule in the console) |
+| No new runs | `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=false`: disables the schedule *and* makes intake ignore GitHub wake-ups (disabling the schedule only in the console leaves wake-ups working) |
 | The run in flight | `aws stepfunctions stop-execution --execution-arn <arn>` (then `aws lambda-microvms terminate-microvm` if it was mid-run: stopping skips the finish step) |
 | Wake-ups only | `gh variable delete AWS_WAKE_ROLE_ARN -R Oliver-ke/salamanda` (polling continues) |
 | Everything, hard | Suspend the GitHub App installation, or revoke the Anthropic key: every run then fails closed |

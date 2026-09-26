@@ -30,7 +30,7 @@ at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-micr
 ## Run one issue locally
 `~/.config/loop-sdlc/worker.env` (never committed):
 ```
-LOOP_REPO=Oliver-ke/loop-sdlc
+LOOP_REPO=Oliver-ke/salamanda
 BEDROCK_MODEL_ID=<from spike findings>
 AWS_REGION=<from spike findings>
 GITHUB_APP_ID=<id>
@@ -41,7 +41,7 @@ LOOP_GIT_AUTHOR_EMAIL=<bot-user-id>+<app-slug>[bot]@users.noreply.github.com
 ```
 ```bash
 docker build -f agent/Dockerfile -t loop-worker .
-docker run --rm \
+docker run --rm --init \
   --env-file ~/.config/loop-sdlc/worker.env \
   --env-file <(aws configure export-credentials --format env-no-export) \
   -v ~/.config/loop-sdlc/app.pem:/run/secrets/app.pem:ro \
@@ -51,7 +51,14 @@ Exit code 0 means a pull request was opened; the JSON line on stdout says what h
 Stop a run with Ctrl-C. A pull request is opened only when `npm run verify` and the
 guardrail check both pass. If verify still fails after the retries but the guardrail
 passes, the work in progress is pushed to its `agent/issue-N-…` branch for inspection,
-and no pull request is opened.
+and no pull request is opened. Each attempt pushes a new branch and never overwrites one:
+if a retry against the same `main` finds its branch already on GitHub (for example under
+an open pull request), the push fails and the run reports an error — delete that branch
+or wait for `main` to move before retrying.
+
+`--init` reaps the processes the worker kills after each agent command. The worker
+refuses to run git unless `.git` is a real directory it owns, so git worktree and
+submodule checkouts (where `.git` is a file) are not supported.
 
 ## Serve
 `python -m loop_agent serve --port 8080` accepts one job over HTTP (`POST /jobs` with

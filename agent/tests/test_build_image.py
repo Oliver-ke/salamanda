@@ -56,3 +56,20 @@ def test_accepted_keeps_only_members_the_operation_takes():
         operation_model=lambda op: SimpleNamespace(input_shape=shape))))
     assert accepted(client, "UpdateMicrovmImage", {"imageIdentifier": "a", "name": "n", "hooks": {}}) == \
         {"imageIdentifier": "a", "hooks": {}}
+
+
+def test_accepted_reports_dropped_keys_on_stderr(capsys):
+    shape = SimpleNamespace(members={"imageIdentifier": 1})
+    client = SimpleNamespace(meta=SimpleNamespace(service_model=SimpleNamespace(
+        operation_model=lambda op: SimpleNamespace(input_shape=shape))))
+    accepted(client, "UpdateMicrovmImage", {"imageIdentifier": "a", "name": "n", "hooks": {}})
+    err = capsys.readouterr().err
+    assert "note: UpdateMicrovmImage does not accept ['hooks', 'name']; ignored" in err
+
+
+def test_accepted_is_silent_when_nothing_is_dropped(capsys):
+    shape = SimpleNamespace(members={"imageIdentifier": 1})
+    client = SimpleNamespace(meta=SimpleNamespace(service_model=SimpleNamespace(
+        operation_model=lambda op: SimpleNamespace(input_shape=shape))))
+    accepted(client, "UpdateMicrovmImage", {"imageIdentifier": "a"})
+    assert capsys.readouterr().err == ""

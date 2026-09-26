@@ -66,6 +66,9 @@ def image_request(name: str, artifact_uri: str, build_role_arn: str, base_image_
 
 def accepted(client, operation: str, request: dict) -> dict:
     members = client.meta.service_model.operation_model(operation).input_shape.members
+    dropped = set(request) - set(members)
+    if dropped:
+        print(f"note: {operation} does not accept {sorted(dropped)}; ignored", file=sys.stderr)
     return {k: v for k, v in request.items() if k in members}
 
 

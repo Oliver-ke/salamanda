@@ -33,8 +33,8 @@ variable "lambda_zip" {
 
 variable "max_run_seconds" {
   type        = number
-  default     = 3900
-  description = "Platform hard cap on one MicroVM (the state machine gives up after 3600 s of polling)"
+  default     = 4500
+  description = "Platform hard cap on one MicroVM (the state machine gives up after 3600 s of polling, plus start, dispatch and finish)"
 }
 
 variable "schedule_enabled" {

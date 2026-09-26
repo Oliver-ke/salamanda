@@ -10,6 +10,11 @@ Terraform is human-only. CI runs `fmt -check` and `validate`; a human runs `plan
 The agent never touches this directory.
 
 ## First deploy
+Before the first apply, check the account's unreserved concurrency:
+`aws --profile veroak lambda get-account-settings --query AccountLimit.UnreservedConcurrentExecutions`.
+If it is 10 or less, the intake's `reserved_concurrent_executions = 1` will fail to apply
+(Lambda keeps 10 unreserved). Request a concurrency increase, or temporarily remove that line.
+
 ```bash
 agent/deploy/package_lambdas.sh                                  # build/lambdas.zip
 cp infra/example.tfvars infra/local.tfvars                       # edit if needed; not committed
@@ -30,13 +35,26 @@ grep -vE '^(ANTHROPIC_API_KEY|GITHUB_APP_PRIVATE_KEY)' ~/.config/loop-sdlc/worke
 ```
 
 ## First run, by hand
+Send the job through the queue, as intake would, so the Pipe is exercised with someone watching.
+Label the issue `agent:queued` first (`gh issue edit <N> --add-label agent:queued --remove-label agent:ready`),
+as intake would.
 ```bash
 SHA=$(gh api repos/Oliver-ke/salamanda/branches/main --jq .commit.sha)
+aws --profile veroak sqs send-message --queue-url "$(terraform -chdir=infra output -raw queue_url)" \
+  --message-group-id Oliver-ke/salamanda --message-deduplication-id "<N>-$SHA" \
+  --message-body "{\"repo\":\"Oliver-ke/salamanda\",\"issue\":<N>,\"sha\":\"$SHA\"}"
+```
+Fallback, if the Pipe is the problem (skips the queue entirely):
+```bash
 aws --profile veroak stepfunctions start-execution \
   --state-machine-arn "$(terraform -chdir=infra output -raw state_machine_arn)" \
   --input "{\"repo\":\"Oliver-ke/salamanda\",\"issue\":<N>,\"sha\":\"$SHA\"}"
 ```
 Watch it in the Step Functions console. Expect a PR (or an issue comment) and a terminated MicroVM.
+
+Before enabling the schedule, check the `salamanda-tasks-dlq-not-empty` alarm in CloudWatch: it must be
+`OK` (a message in the dead-letter queue is a job the Pipe could not start). The alarm has no actions,
+so keep checking it by hand while the loop runs.
 Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=true`.
 
 ## Stopping it (any one is enough)
@@ -51,6 +69,6 @@ Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var
 |---|---|
 | One intake at a time | intake Lambda reserved concurrency 1; the schedule never retries |
 | One run at a time | intake refuses while an execution runs or an issue is `agent:queued`/`agent:running` |
-| Wall clock per run | 120 polls × 30 s in the state machine; `max_run_seconds` (3900 s) on the MicroVM itself |
+| Wall clock per run | 120 polls × 30 s in the state machine; `max_run_seconds` (4500 s) on the MicroVM itself |
 | Tool calls per run | `LOOP_MAX_TOOL_CALLS` (default 60) in the image env |
 | Model spend | the Anthropic Console spend limit on the key's workspace |

@@ -57,8 +57,11 @@ resource "aws_iam_role_policy" "task" {
       { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
       Resource = "arn:aws:logs:${var.region}:${local.account}:*" },
       { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = local.secret_arns },
+      # RunMicrovm may also authorise the AWS-owned ingress/egress network connectors.
       { Effect = "Allow", Action = ["lambda:RunMicrovm", "lambda:GetMicrovm", "lambda:CreateMicrovmAuthToken",
-      "lambda:TerminateMicrovm", "lambda:GetMicrovmImage"], Resource = "arn:aws:lambda:${var.region}:${local.account}:*" },
+        "lambda:TerminateMicrovm", "lambda:GetMicrovmImage"],
+        Resource = ["arn:aws:lambda:${var.region}:${local.account}:*",
+      "arn:aws:lambda:${var.region}:aws:network-connector:*"] },
     ]
   })
 }
@@ -101,4 +104,11 @@ resource "aws_lambda_function" "intake" {
       QUEUE_URL         = aws_sqs_queue.tasks.url
     })
   }
+}
+
+# The schedule already never retries; this stops Lambda's own async retries too, so a
+# failed intake is simply picked up by the next scheduled one.
+resource "aws_lambda_function_event_invoke_config" "intake" {
+  function_name          = aws_lambda_function.intake.function_name
+  maximum_retry_attempts = 0
 }

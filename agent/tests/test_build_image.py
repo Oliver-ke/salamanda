@@ -17,6 +17,18 @@ def test_artifact_has_dockerfile_at_root_and_the_agent_tree_without_junk():
     assert not any(part in n for n in names for part in (".venv/", "__pycache__/", ".pytest_cache/"))
 
 
+def test_artifact_contains_only_git_tracked_files():
+    secret = REPO_ROOT / "agent" / ".env-test-secret"
+    secret.write_text("ANTHROPIC_API_KEY=sk-should-never-ship\n")
+    try:
+        names = zipfile.ZipFile(io.BytesIO(make_artifact(REPO_ROOT))).namelist()
+        assert ".env-test-secret" not in names
+        assert not any(n.endswith(".env-test-secret") for n in names)
+        assert "agent/src/loop_agent/server.py" in names
+    finally:
+        secret.unlink()
+
+
 def test_image_env_refuses_secrets(tmp_path):
     ok = tmp_path / "image.env"
     ok.write_text("# comment\nLOOP_REPO=o/r\n\nLOOP_MODEL_ID=claude-opus-5-5\n")

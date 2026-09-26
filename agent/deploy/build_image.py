@@ -3,10 +3,13 @@
 Terraform's aws_lambdamicrovms_image cannot set the /ready hook the worker needs,
 so the image lives outside Terraform; the bucket and build role it uses come from
 Terraform outputs. Secrets never go into an image: its snapshot is readable by
-anyone who can run it, so the env file may only hold non-secret settings."""
+anyone who can run it, so the env file may only hold non-secret settings, and the
+code artifact is built from git-tracked files only — an untracked file (a stray
+.env, a key someone dropped in the tree) never gets zipped in."""
 
 import argparse
 import io
+import subprocess
 import sys
 import time
 import zipfile
@@ -20,13 +23,15 @@ BASE_IMAGE = "arn:aws:lambda:{region}:aws:microvm-image:al2023-1"
 
 
 def make_artifact(repo_root: Path = REPO_ROOT) -> bytes:
+    tracked = subprocess.run(["git", "ls-files", "-z", "agent"], cwd=repo_root, capture_output=True,
+                             check=True, text=True).stdout.split("\0")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(repo_root / "agent" / "Dockerfile", "Dockerfile")
-        for path in sorted((repo_root / "agent").rglob("*")):
-            rel = path.relative_to(repo_root)
-            if path.is_file() and not EXCLUDE_PARTS & set(rel.parts):
-                z.write(path, rel.as_posix())
+        for rel in sorted(p for p in tracked if p):
+            path = repo_root / rel
+            if path.is_file() and not EXCLUDE_PARTS & set(Path(rel).parts):
+                z.write(path, rel)
     return buf.getvalue()
 
 

@@ -16,11 +16,11 @@ cp infra/example.tfvars infra/local.tfvars                       # edit if neede
 terraform -chdir=infra init
 terraform -chdir=infra apply -var-file=local.tfvars              # schedule stays DISABLED
 
-# Secrets (values never go through Terraform or git)
+# Secrets (read from files, never on the command line, never through Terraform or git)
 aws --profile veroak secretsmanager put-secret-value --secret-id "$(terraform -chdir=infra output -raw anthropic_secret_arn)" \
-  --secret-string "$(cat ~/.config/loop-sdlc/anthropic.key)"
+  --secret-string file://$HOME/.config/loop-sdlc/anthropic.key
 aws --profile veroak secretsmanager put-secret-value --secret-id "$(terraform -chdir=infra output -raw github_key_secret_arn)" \
-  --secret-string "$(cat ~/.config/loop-sdlc/app.pem)"
+  --secret-string file://$HOME/.config/loop-sdlc/app.pem
 
 # Image: non-secret settings only
 grep -vE '^(ANTHROPIC_API_KEY|GITHUB_APP_PRIVATE_KEY)' ~/.config/loop-sdlc/worker.env > /tmp/image.env

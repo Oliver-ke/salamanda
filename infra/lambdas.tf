@@ -57,11 +57,13 @@ resource "aws_iam_role_policy" "task" {
       { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
       Resource = "arn:aws:logs:${var.region}:${local.account}:*" },
       { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = local.secret_arns },
-      # RunMicrovm may also authorise the AWS-owned ingress/egress network connectors.
       { Effect = "Allow", Action = ["lambda:RunMicrovm", "lambda:GetMicrovm", "lambda:CreateMicrovmAuthToken",
         "lambda:TerminateMicrovm", "lambda:GetMicrovmImage"],
-        Resource = ["arn:aws:lambda:${var.region}:${local.account}:*",
-      "arn:aws:lambda:${var.region}:aws:network-connector:*"] },
+      Resource = "arn:aws:lambda:${var.region}:${local.account}:*" },
+      # RunMicrovm attaches the AWS-owned ingress/egress connectors, which needs
+      # lambda:PassNetworkConnector on them (found on the first deployed run).
+      { Effect = "Allow", Action = ["lambda:PassNetworkConnector"],
+      Resource = "arn:aws:lambda:${var.region}:aws:network-connector:*" },
     ]
   })
 }

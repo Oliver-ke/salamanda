@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { addExpense, loadExpenses } from './expenses';
+import { addExpense, ExpenseValidationError, loadExpenses } from './expenses';
 
 let dir: string;
 let file: string;
@@ -87,6 +87,17 @@ describe('addExpense', () => {
   ])('rejects a bad date (%s)', async (_label, override) => {
     await expect(addExpense({ ...valid, ...override })).rejects.toThrow(/date/i);
     await expect(loadExpenses()).resolves.toEqual([]);
+  });
+
+  it.each([
+    ['amount', { amount: 0 }],
+    ['category', { category: '' }],
+    ['date', { date: 'nope' }],
+    ['note', { note: 42 as unknown as string }],
+  ])('throws an ExpenseValidationError whose field is %s', async (field, override) => {
+    const err = await addExpense({ ...valid, ...override }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExpenseValidationError);
+    expect((err as ExpenseValidationError).field).toBe(field);
   });
 
   it('accepts a leap day in a leap year', async () => {

@@ -199,3 +199,8 @@ def test_kill_user_processes_never_sweeps_its_own_uid_or_root(tmp_path, uid_of):
     killed = []
     kill_user_processes(uid, proc_root=root, kill=lambda pid, sig: killed.append(pid))
     assert killed == []
+
+
+def test_child_env_strips_the_anthropic_key():
+    env = child_env({"PATH": "/bin", "ANTHROPIC_API_KEY": "sk-ant", "ANTHROPIC_BASE_URL": "x"})
+    assert not any(k.startswith("ANTHROPIC_") for k in env)

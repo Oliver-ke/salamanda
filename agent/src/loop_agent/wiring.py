@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .agent import StrandsAgentRunner
+from .agent import StrandsAgentRunner, build_model
 from .checks import ensure_dependencies, run_pr_check
 from .commands import run_allowed
 from .config import Config
@@ -58,7 +58,7 @@ def build_deps(config: Config) -> Deps:
         """Reads CLAUDE.md after prepare(), so the system prompt matches the job's commit."""
 
         def session(self, toolbox):
-            return StrandsAgentRunner(config.model_id, config.aws_region,
+            return StrandsAgentRunner(lambda: build_model(config),
                                       system_prompt(repo_dir, PROMPT_FILE)).session(toolbox)
 
     return Deps(

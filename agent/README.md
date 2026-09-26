@@ -1,6 +1,6 @@
 # agent — the loop worker
 
-Takes one GitHub issue, runs a Strands agent on Bedrock against this repo, and opens
+Takes one GitHub issue, runs a Strands agent on Claude against this repo, and opens
 at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-microvm-loop-design.md`.
 
 ## One-time setup (a human)
@@ -15,7 +15,13 @@ at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-micr
      mounting a file you can pass the key itself in `GITHUB_APP_PRIVATE_KEY` (the
      worker strips `GITHUB_APP_*` from every agent-run command's environment).
    - The bot user id for `LOOP_GIT_AUTHOR_EMAIL`: `gh api /users/<app-slug>%5Bbot%5D --jq .id`.
-2. **Bedrock:** enable access to the model named in the spike findings, in that region.
+2. **Model access.** The default provider is the Anthropic API directly
+   (`LOOP_MODEL_PROVIDER=anthropic`, model `claude-opus-5-5`). Save an API key
+   **outside the repo**, e.g. `~/.config/loop-sdlc/anthropic.key`, and `chmod 600` it;
+   the worker refuses a key file that group or others can read, and strips
+   `ANTHROPIC_*` from every agent-run command's environment. To use Amazon Bedrock
+   instead, set `LOOP_MODEL_PROVIDER=bedrock`, `BEDROCK_MODEL_ID` and `AWS_REGION`, and
+   pass AWS credentials to the container.
 3. **Labels:**
    ```bash
    gh label create agent:ready --color 0E8A16 --description "Approved for the loop agent"
@@ -31,8 +37,10 @@ at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-micr
 `~/.config/loop-sdlc/worker.env` (never committed):
 ```
 LOOP_REPO=Oliver-ke/salamanda
-BEDROCK_MODEL_ID=<from spike findings>
-AWS_REGION=<from spike findings>
+LOOP_MODEL_PROVIDER=anthropic
+LOOP_MODEL_ID=claude-opus-5-5
+LOOP_EFFORT=high
+ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic.key
 GITHUB_APP_ID=<id>
 GITHUB_APP_INSTALLATION_ID=<id>
 GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/app.pem
@@ -43,10 +51,12 @@ LOOP_GIT_AUTHOR_EMAIL=<bot-user-id>+<app-slug>[bot]@users.noreply.github.com
 docker build -f agent/Dockerfile -t loop-worker .
 docker run --rm --init \
   --env-file ~/.config/loop-sdlc/worker.env \
-  --env-file <(aws configure export-credentials --format env-no-export) \
   -v ~/.config/loop-sdlc/app.pem:/run/secrets/app.pem:ro \
+  -v ~/.config/loop-sdlc/anthropic.key:/run/secrets/anthropic.key:ro \
   loop-worker /opt/agent-venv/bin/python -m loop_agent run --issue <N>
 ```
+(With `LOOP_MODEL_PROVIDER=bedrock`, add
+`--env-file <(aws configure export-credentials --format env-no-export)` for AWS credentials.)
 Exit code 0 means a pull request was opened; the JSON line on stdout says what happened.
 Stop a run with Ctrl-C. A pull request is opened only when `npm run verify` and the
 guardrail check both pass. If verify still fails after the retries but the guardrail

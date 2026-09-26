@@ -9,7 +9,8 @@ from .conftest import REPO_ROOT
 
 
 def config(**overrides):
-    base = dict(repo="o/r", repo_dir=REPO_ROOT, model_id="m", aws_region="us-east-1",
+    base = dict(repo="o/r", repo_dir=REPO_ROOT, model_provider="bedrock", model_id="m",
+                aws_region="us-east-1", anthropic_api_key=None,
                 github_app_id="1", github_installation_id="2", github_private_key="PEM",
                 bot_login="loop-sdlc[bot]", git_author_email="1+loop-sdlc[bot]@users.noreply.github.com")
     return Config(**{**base, **overrides})

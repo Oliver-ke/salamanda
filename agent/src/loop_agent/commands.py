@@ -13,7 +13,7 @@ from pathlib import Path
 EXACT = {("npm", "run", script) for script in ("verify", "test", "typecheck", "lint", "build")}
 SINGLE_TEST = ["npm", "run", "test", "--workspace", "app", "--"]
 TEST_FILE = re.compile(r"^src/[A-Za-z0-9_./-]+\.test\.tsx?$")
-SECRET_PREFIXES = ("AWS_", "GITHUB_APP_", "BEDROCK_", "LOOP_")
+SECRET_PREFIXES = ("AWS_", "GITHUB_APP_", "BEDROCK_", "LOOP_", "ANTHROPIC_")
 OUTPUT_TAIL = 8000
 ALLOWED_HELP = ("allowed: npm run verify|test|typecheck|lint|build, "
                 "or npm run test --workspace app -- src/<path>.test.ts(x)")

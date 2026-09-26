@@ -3,7 +3,7 @@ name = "loop-agent"
 version = "0.0.0"
 requires-python = ">=3.13"
 dependencies = [
-  "strands-agents>=1.0",
+  "strands-agents[anthropic]>=1.0",
   "httpx>=0.28",
   "pyjwt[crypto]>=2.10",
 ]

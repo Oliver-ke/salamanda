@@ -71,10 +71,14 @@ refuses to run git unless `.git` is a real directory it owns, so git worktree an
 submodule checkouts (where `.git` is a file) are not supported.
 
 ## Serve
-`python -m loop_agent serve --port 8080` accepts one job over HTTP (`POST /jobs` with
-`{"repo", "issue", "sha"}`) and exits once that job has finished. That is the production
-model: one container (one MicroVM) per task, so nothing one job leaves behind reaches
-the next. Start a fresh container for every job.
+`python -m loop_agent serve --port 8080` is the MicroVM entry point.
+- It answers the build-time `/aws/lambda-microvms/runtime/v1/ready` hook on any method.
+- It reads only `LOOP_REPO` at startup, so nothing is built into the snapshot.
+- It accepts exactly one job, `POST /jobs {repo, issue, sha, secrets}`. Config and deps are built from the image environment plus the job's `secrets` (`anthropic_api_key`, `github_app_private_key`).
+- It reports progress on `GET /jobs/current`.
+- It stays up afterwards so the result can be read, and refuses a second job.
+
+The secrets are held in memory only, never logged or returned. The MicroVM runs with no AWS execution role.
 
 ## Tests
 `cd agent && uv run pytest -q`

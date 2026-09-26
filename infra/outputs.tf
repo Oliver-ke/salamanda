@@ -1,0 +1,8 @@
+output "artifact_bucket" { value = aws_s3_bucket.artifacts.bucket }
+output "build_role_arn" { value = aws_iam_role.image_build.arn }
+output "image_arn" { value = local.image_arn }
+output "state_machine_arn" { value = aws_sfn_state_machine.run_task.arn }
+output "queue_url" { value = aws_sqs_queue.tasks.url }
+output "anthropic_secret_arn" { value = aws_secretsmanager_secret.anthropic_api_key.arn }
+output "github_key_secret_arn" { value = aws_secretsmanager_secret.github_app_private_key.arn }
+output "schedule_name" { value = aws_scheduler_schedule.intake.name }

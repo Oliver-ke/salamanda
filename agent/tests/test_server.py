@@ -200,6 +200,25 @@ def test_handler_exception_becomes_an_error_result():
         srv.stop()
 
 
+def test_handler_exception_text_never_leaks_a_secret():
+    finished = threading.Event()
+
+    def handle(job, secrets):
+        raise RuntimeError(f"bad key {secrets['anthropic_api_key']}")
+
+    srv = JobServer(handle, lambda job, result: finished.set(), expected_repo="o/r",
+                    host="127.0.0.1", port=0)
+    srv.start()
+    try:
+        secrets = {"anthropic_api_key": "sk-ant-SECRET", "github_app_private_key": "PEM-SECRET"}
+        post(srv.port, {"repo": "o/r", "issue": 7, "sha": SHA, "secrets": secrets})
+        assert finished.wait(5)
+        detail = get(srv.port, "/jobs/current")[1]["result"]["detail"]
+        assert "SECRET" not in detail and "***" in detail
+    finally:
+        srv.stop()
+
+
 def test_negative_or_huge_content_length_is_rejected(server):
     srv, *_ = server
     for length in ("-1", str(10 * 1024 * 1024)):

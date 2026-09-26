@@ -63,7 +63,11 @@ class JobServer:
         try:
             result = self.handle(job, secrets)
         except Exception as exc:  # report, never leave the job "running" forever
-            result = RunResult("error", None, f"{type(exc).__name__}: {exc}")
+            detail = f"{type(exc).__name__}: {exc}"
+            for value in secrets.values():
+                if value:
+                    detail = detail.replace(value, "***")
+            result = RunResult("error", None, detail)
         with self._lock:
             self._result, self._state = asdict(result), "done"
         self.on_done(job, result)

@@ -17,6 +17,17 @@ export type Expense = {
 
 export type ExpenseInput = Omit<Expense, 'id'>;
 
+/** Thrown by `addExpense` when the input is invalid. `field` names the offending field. */
+export class ExpenseValidationError extends Error {
+  readonly field: keyof ExpenseInput;
+
+  constructor(field: keyof ExpenseInput, message: string) {
+    super(message);
+    this.name = 'ExpenseValidationError';
+    this.field = field;
+  }
+}
+
 /** Path of the expenses file: `EXPENSES_FILE`, else `data/expenses.json` relative to the app. */
 function expensesFile(): string {
   const configured = process.env.EXPENSES_FILE;
@@ -36,16 +47,22 @@ function isValidDate(value: unknown): value is string {
 
 function validate(input: ExpenseInput): void {
   if (typeof input.amount !== 'number' || !Number.isInteger(input.amount) || input.amount <= 0) {
-    throw new Error(`Invalid amount: must be a positive integer number of cents, got ${input.amount}`);
+    throw new ExpenseValidationError(
+      'amount',
+      `Invalid amount: must be a positive integer number of cents, got ${input.amount}`,
+    );
   }
   if (typeof input.category !== 'string' || input.category.trim() === '') {
-    throw new Error('Invalid category: must be a non-empty string');
+    throw new ExpenseValidationError('category', 'Invalid category: must be a non-empty string');
   }
   if (!isValidDate(input.date)) {
-    throw new Error(`Invalid date: must be a real calendar date in YYYY-MM-DD format, got "${input.date}"`);
+    throw new ExpenseValidationError(
+      'date',
+      `Invalid date: must be a real calendar date in YYYY-MM-DD format, got "${input.date}"`,
+    );
   }
   if (typeof input.note !== 'string') {
-    throw new Error('Invalid note: must be a string');
+    throw new ExpenseValidationError('note', 'Invalid note: must be a string');
   }
 }
 

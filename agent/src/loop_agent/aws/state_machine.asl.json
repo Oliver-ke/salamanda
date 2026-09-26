@@ -1,7 +1,14 @@
 {
   "Comment": "One issue, one Lambda MicroVM, always terminated.",
-  "StartAt": "Start",
+  "StartAt": "Shape?",
   "States": {
+    "Shape?": {
+      "Type": "Choice",
+      "Comment": "An EventBridge Pipe may deliver a one-element array instead of the job object.",
+      "Choices": [{"Variable": "$[0]", "IsPresent": true, "Next": "Unwrap"}],
+      "Default": "Start"
+    },
+    "Unwrap": {"Type": "Pass", "InputPath": "$[0]", "Next": "Start"},
     "Start": {
       "Type": "Task",
       "Resource": "${start_arn}",

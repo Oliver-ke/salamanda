@@ -74,7 +74,8 @@ def test_stale_queued_claim_is_reclaimed_when_idle():
     gh = FakeGitHub(by_label={"agent:queued": [Issue(5, "t", "", ["agent:queued"], OLD)]})
     d, sent = deps(gh)
     run_intake(d)
-    assert ("remove", 5, "agent:queued") in gh.calls and ("add", 5, ("agent:ready",)) in gh.calls
+    assert ("remove", 5, "agent:queued") in gh.calls
+    assert ("add", 5, ("agent:ready", "agent:requeued")) in gh.calls  # I2: requeue is marked
     assert any(c[0] == "comment" and "stale" in c[2] for c in gh.calls)
 
 
@@ -105,3 +106,73 @@ def test_nothing_eligible_queues_nothing():
     gh = FakeGitHub(by_label={"agent:ready": [ready(6, "Depends on: #5")]}, states={5: "open"})
     d, sent = deps(gh)
     assert run_intake(d)["queued"] is None and sent == []
+
+
+def test_claiming_an_issue_clears_earlier_outcome_labels():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5, extra=("agent:failed",))]})
+    d, sent = deps(gh)
+    assert run_intake(d)["queued"] == 5
+    assert ("add", 5, ("agent:queued",)) in gh.calls and ("remove", 5, "agent:ready") in gh.calls
+    assert ("remove", 5, "agent:failed") in gh.calls
+    assert sent == [{"repo": "o/r", "issue": 5, "sha": "c" * 40}]
+
+
+def test_claiming_removes_too_big_but_keeps_requeued():
+    gh = FakeGitHub(by_label={"agent:ready": [ready(5, extra=("agent:too-big", "agent:requeued"))]})
+    d, _ = deps(gh)
+    run_intake(d)
+    assert ("remove", 5, "agent:too-big") in gh.calls
+    assert ("remove", 5, "agent:failed") not in gh.calls
+    # agent:requeued must survive the claim, or the requeue cap could never fire;
+    # finish (the run started) or the second stale reclaim clears it.
+    assert ("remove", 5, "agent:requeued") not in gh.calls
+
+
+class LabelledGitHub(FakeGitHub):
+    """Applies label changes so several intake ticks can run against one issue."""
+
+    def __init__(self, labels):
+        super().__init__()
+        self.labels, self.stamp = set(labels), OLD
+
+    def list_issues(self, label):
+        return [Issue(5, "t", "Depends on: none", sorted(self.labels), self.stamp)] if label in self.labels else []
+
+    def add_labels(self, n, labels):
+        super().add_labels(n, labels)
+        self.labels |= set(labels)
+
+    def remove_label(self, n, label):
+        super().remove_label(n, label)
+        self.labels.discard(label)
+
+
+def test_a_job_that_never_starts_is_requeued_once_then_failed():
+    gh = LabelledGitHub({"agent:queued"})
+    d, sent = deps(gh)
+    run_intake(d)   # tick 1: stale claim back to ready (marked requeued), then claimed again
+    assert gh.labels == {"agent:queued", "agent:requeued"} and len(sent) == 1
+    run_intake(d)   # tick 2: its run never started again: failed, not requeued
+    assert gh.labels == {"agent:failed"}
+    run_intake(d)   # tick 3: nothing left to queue
+    assert len(sent) == 1
+
+
+def test_first_stale_queued_claim_is_requeued_and_marked():
+    gh = FakeGitHub(by_label={"agent:queued": [Issue(5, "t", "", ["agent:queued"], OLD)]})
+    d, _ = deps(gh)
+    run_intake(d)
+    assert ("add", 5, ("agent:ready", "agent:requeued")) in gh.calls
+    assert not any(c[0] == "add" and "agent:failed" in c[2] for c in gh.calls)
+
+
+def test_second_stale_queued_claim_fails_instead_of_requeuing():
+    gh = FakeGitHub(by_label={"agent:queued": [Issue(5, "t", "", ["agent:queued", "agent:requeued"], OLD)]})
+    d, sent = deps(gh)
+    run_intake(d)
+    assert ("remove", 5, "agent:queued") in gh.calls and ("remove", 5, "agent:requeued") in gh.calls
+    assert ("add", 5, ("agent:failed",)) in gh.calls
+    assert not any(c[0] == "add" and "agent:ready" in c[2] for c in gh.calls)
+    comment = next(c[2] for c in gh.calls if c[0] == "comment")
+    assert "queued twice" in comment and "dead-letter queue" in comment and "agent:ready" in comment
+    assert sent == []

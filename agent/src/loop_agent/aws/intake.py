@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from .selection import FAILED, QUEUED, READY, RUNNING, closed_issues, depends_on, select_issue
+from .selection import (FAILED, OUTCOME_LABELS, QUEUED, READY, REQUEUED, RUNNING, closed_issues,
+                        depends_on, select_issue)
 
 STALE_AFTER = timedelta(minutes=30)
 
@@ -32,8 +33,16 @@ def _age(updated_at: str, now: datetime) -> timedelta:
 
 def _reclaim(gh, issue, label: str) -> None:
     gh.remove_label(issue.number, label)
-    if label == QUEUED:
-        gh.add_labels(issue.number, [READY])
+    if label == QUEUED and REQUEUED in issue.labels:
+        # Requeue at most once: a job that never starts twice (Pipe or state machine
+        # broken) must not bounce between ready and queued forever.
+        gh.remove_label(issue.number, REQUEUED)
+        gh.add_labels(issue.number, [FAILED])
+        gh.comment(issue.number, "Agent run: **error**\n\nThis issue was queued twice without its run "
+                                 "starting; not requeuing again. Check the dead-letter queue and the Step "
+                                 "Functions executions, then re-add `agent:ready`.")
+    elif label == QUEUED:
+        gh.add_labels(issue.number, [READY, REQUEUED])
         gh.comment(issue.number, "Requeued: this issue was queued but its run never started (stale claim).")
     else:
         gh.add_labels(issue.number, [FAILED])
@@ -67,6 +76,9 @@ def run_intake(deps: IntakeDeps) -> dict:
     sha = gh.branch_sha("main")
     gh.add_labels(number, [QUEUED])
     gh.remove_label(number, READY)
+    for label in OUTCOME_LABELS:  # a retry starts clean
+        if label in selection.issue.labels:
+            gh.remove_label(number, label)
     deps.send({"repo": deps.repo, "issue": number, "sha": sha})
     return {"queued": number, "sha": sha, "reasons": reasons}
 

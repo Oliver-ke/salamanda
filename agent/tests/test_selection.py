@@ -35,15 +35,18 @@ def test_picks_the_single_eligible_issue():
 
 def test_unapproved_and_in_flight_issues_are_skipped_with_reasons():
     sel = select_issue([issue(1, labels=()), issue(2, labels=("agent:ready", "agent:queued")),
-                        issue(3, labels=("agent:ready", "agent:failed")),
-                        issue(4, labels=("agent:ready", "agent:running")),
-                        issue(5, labels=("agent:ready", "agent:too-big"))], {}, set())
+                        issue(4, labels=("agent:ready", "agent:running"))], {}, set())
     assert sel.issue is None
     assert "not approved" in sel.reasons[1]
     assert "agent:queued" in sel.reasons[2]
-    assert "agent:failed" in sel.reasons[3]
     assert "agent:running" in sel.reasons[4]
-    assert "agent:too-big" in sel.reasons[5]
+
+
+@pytest.mark.parametrize("label", ["agent:failed", "agent:too-big"])
+def test_re_adding_ready_to_a_failed_or_too_big_issue_retries_it(label):
+    sel = select_issue([issue(3, labels=("agent:ready", label))], {}, set())
+    assert sel.issue is not None and sel.issue.number == 3
+    assert sel.reasons == {}
 
 
 def test_dependency_must_be_closed():

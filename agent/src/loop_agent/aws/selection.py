@@ -9,7 +9,13 @@ from ..prompts import JS_SPACE
 
 READY, QUEUED, RUNNING = "agent:ready", "agent:queued", "agent:running"
 FAILED, TOO_BIG = "agent:failed", "agent:too-big"
-BLOCKING_LABELS = (QUEUED, RUNNING, FAILED, TOO_BIG)
+REQUEUED = "agent:requeued"  # a stale queued claim has already gone back to ready once
+# Only an in-flight claim blocks. A failed or too-big outcome label does not: re-adding
+# agent:ready is how a human asks for a retry, and intake clears the old label on claim.
+BLOCKING_LABELS = (QUEUED, RUNNING)
+# Cleared when intake claims an issue. REQUEUED is deliberately not here: it must survive
+# the claim so a second stale claim can see it; finish clears it once a run has started.
+OUTCOME_LABELS = (FAILED, TOO_BIG)
 PRIORITY = {"priority:high": 0, "priority:low": 2}
 DEPENDS = re.compile(r"^depends on:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
 # GitHub's closing keywords, mirrored from harness/src/pr-claim.mjs with ASCII/whitespace

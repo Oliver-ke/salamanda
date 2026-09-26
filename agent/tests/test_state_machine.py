@@ -53,3 +53,16 @@ def test_start_parameters_pass_the_execution_name_and_job_fields():
     params = machine()["States"]["Start"]["Parameters"]
     assert params["execution.$"] == "$$.Execution.Name"
     assert params["repo.$"] == "$.repo" and params["issue.$"] == "$.issue" and params["sha.$"] == "$.sha"
+
+
+def test_array_input_is_unwrapped_before_start():
+    m = machine()
+    states = m["States"]
+    assert m["StartAt"] == "Shape?"
+    shape = states["Shape?"]
+    assert shape["Type"] == "Choice"
+    assert shape["Choices"] == [{"Variable": "$[0]", "IsPresent": True, "Next": "Unwrap"}]
+    assert shape["Default"] == "Start"
+    unwrap = states["Unwrap"]
+    assert unwrap["Type"] == "Pass" and unwrap["InputPath"] == "$[0]" and unwrap["Next"] == "Start"
+    assert "Parameters" in states["Start"]

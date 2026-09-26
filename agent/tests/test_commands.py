@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from loop_agent.commands import (CommandRejected, as_user, child_env, parse_allowed,
-                                 run_allowed, run_in_group)
+from loop_agent.commands import (CommandRejected, as_user, child_env, kill_user_processes,
+                                 parse_allowed, run_allowed, run_in_group)
 
 
 @pytest.mark.parametrize("cmd", [
@@ -149,7 +149,6 @@ def _fake_proc(tmp_path, procs):
 
 
 def test_kill_user_processes_kills_only_that_uid_until_none_remain(tmp_path):
-    from loop_agent.commands import kill_user_processes
     root = _fake_proc(tmp_path, {101: 10001, 102: 0, 103: 10001})
     killed = []
 
@@ -164,7 +163,6 @@ def test_kill_user_processes_kills_only_that_uid_until_none_remain(tmp_path):
 
 
 def test_kill_user_processes_ignores_processes_that_vanish(tmp_path):
-    from loop_agent.commands import kill_user_processes
     root = _fake_proc(tmp_path, {201: 10001})
 
     def kill(pid, sig):
@@ -189,3 +187,15 @@ def test_run_allowed_sweeps_the_command_users_processes_afterwards(tmp_path):
 
     run_allowed("npm run verify", tmp_path, runner=fake_run, sweep=lambda user: swept.append(user))
     assert swept == ["runner"]  # no command user → nothing to sweep
+
+
+@pytest.mark.parametrize("uid_of", [lambda: __import__("os").geteuid(), lambda: 0])
+def test_kill_user_processes_never_sweeps_its_own_uid_or_root(tmp_path, uid_of):
+    """The sweep targets the unprivileged command user. Aimed at the worker's own uid
+    (e.g. CI, where the test user is also called `runner`) or at root, it would kill
+    the worker itself — so it refuses and kills nothing."""
+    uid = uid_of()
+    root = _fake_proc(tmp_path, {301: uid})
+    killed = []
+    kill_user_processes(uid, proc_root=root, kill=lambda pid, sig: killed.append(pid))
+    assert killed == []

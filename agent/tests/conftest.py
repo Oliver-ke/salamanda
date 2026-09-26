@@ -32,3 +32,13 @@ def repo(tmp_path: Path) -> Path:
 
 
 PROTECTED = [".github/", "harness/", "CLAUDE.md", "app/vitest.config.*"]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_process_sweep(monkeypatch):
+    """Tests pass command_user="runner"; the real sweep would SIGKILL every process of
+    any local user by that name (on GitHub-hosted CI that is the test run itself).
+    Tests that exercise the sweep import kill_user_processes directly, bound before
+    this patch, and drive it against a fake /proc."""
+    import loop_agent.commands as commands
+    monkeypatch.setattr(commands, "kill_user_processes", lambda uid, **kwargs: None)

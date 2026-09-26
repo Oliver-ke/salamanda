@@ -107,7 +107,12 @@ def kill_user_processes(uid: int, *, proc_root: Path = Path("/proc"), kill=os.ki
     """SIGKILL every process whose real uid is `uid`, repeating until none are left.
     The process-group kill misses anything that called setsid (Node's
     spawn({detached: true}) does); this sweep does not, so nothing the command user
-    starts can outlive its command and race the worker."""
+    starts can outlive its command and race the worker.
+
+    It never sweeps root or the worker's own uid: that would kill the worker itself.
+    Without a separate command user there is nothing to isolate, so nothing to sweep."""
+    if uid in (0, os.geteuid()):
+        return
     for _ in range(SWEEP_ROUNDS):
         pids = [int(entry.name) for entry in proc_root.iterdir()
                 if entry.name.isdigit() and _real_uid(entry / "status") == uid]

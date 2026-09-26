@@ -6,3 +6,4 @@ output "queue_url" { value = aws_sqs_queue.tasks.url }
 output "anthropic_secret_arn" { value = aws_secretsmanager_secret.anthropic_api_key.arn }
 output "github_key_secret_arn" { value = aws_secretsmanager_secret.github_app_private_key.arn }
 output "schedule_name" { value = aws_scheduler_schedule.intake.name }
+output "wake_role_arn" { value = aws_iam_role.wake.arn }

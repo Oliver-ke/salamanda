@@ -37,6 +37,7 @@ resource "aws_iam_role_policy" "intake" {
       { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.github_app_private_key.arn },
       { Effect = "Allow", Action = ["states:ListExecutions"], Resource = aws_sfn_state_machine.run_task.arn },
       { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.tasks.arn },
+      { Effect = "Allow", Action = ["ssm:GetParameter", "ssm:PutParameter"], Resource = aws_ssm_parameter.intake_backoff.arn },
     ]
   })
 }
@@ -64,6 +65,7 @@ resource "aws_iam_role_policy" "task" {
       # lambda:PassNetworkConnector on them (found on the first deployed run).
       { Effect = "Allow", Action = ["lambda:PassNetworkConnector"],
       Resource = "arn:aws:lambda:${var.region}:aws:network-connector:*" },
+      { Effect = "Allow", Action = ["ssm:PutParameter"], Resource = aws_ssm_parameter.intake_backoff.arn },
     ]
   })
 }
@@ -84,6 +86,8 @@ resource "aws_lambda_function" "task" {
       IMAGE_ARN            = local.image_arn
       MAX_RUN_SECONDS      = tostring(var.max_run_seconds)
       ANTHROPIC_SECRET_ARN = aws_secretsmanager_secret.anthropic_api_key.arn
+      BACKOFF_PARAMETER    = aws_ssm_parameter.intake_backoff.name
+      INTAKE_BASE_SECONDS  = tostring(var.intake_base_seconds)
     })
   }
 }
@@ -103,8 +107,11 @@ resource "aws_lambda_function" "intake" {
   source_code_hash               = filebase64sha256(var.lambda_zip)
   environment {
     variables = merge(local.common_env, {
-      STATE_MACHINE_ARN = aws_sfn_state_machine.run_task.arn
-      QUEUE_URL         = aws_sqs_queue.tasks.url
+      STATE_MACHINE_ARN    = aws_sfn_state_machine.run_task.arn
+      QUEUE_URL            = aws_sqs_queue.tasks.url
+      BACKOFF_PARAMETER    = aws_ssm_parameter.intake_backoff.name
+      INTAKE_BASE_SECONDS  = tostring(var.intake_base_seconds)
+      INTAKE_SLEEP_SECONDS = tostring(var.intake_sleep_minutes * 60)
     })
   }
 }

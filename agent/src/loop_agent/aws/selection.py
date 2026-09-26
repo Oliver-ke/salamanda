@@ -5,17 +5,20 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from ..github import Issue
+from ..prompts import JS_SPACE
 
 READY, QUEUED, RUNNING = "agent:ready", "agent:queued", "agent:running"
 FAILED, TOO_BIG = "agent:failed", "agent:too-big"
 BLOCKING_LABELS = (QUEUED, RUNNING, FAILED, TOO_BIG)
 PRIORITY = {"priority:high": 0, "priority:low": 2}
 DEPENDS = re.compile(r"^depends on:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
-# GitHub's closing keywords, with #N, owner/repo#N or an issue URL.
+# GitHub's closing keywords, mirrored from harness/src/pr-claim.mjs with ASCII/whitespace
+# reconciliation: a closing keyword, then whitespace, then an issue reference (#N,
+# owner/repo#N, or https?://github.com/.../issues/N), capturing the issue number.
 CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
-    r"(?:[\w.-]+/[\w.-]+#|https://github\.com/[\w.-]+/[\w.-]+/issues/|#)(\d+)\b",
-    re.IGNORECASE)
+    rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?{JS_SPACE}+"
+    r"(?:#|[\w.-]+/[\w.-]+#|https?://github\.com/[\w.-]+/[\w.-]+/issues/)(\d+)\b",
+    re.IGNORECASE | re.ASCII)
 
 
 def depends_on(body: str) -> list[int]:

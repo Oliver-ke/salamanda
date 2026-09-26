@@ -7,8 +7,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .microvm import http_json
-from .selection import FAILED, QUEUED, RUNNING, TOO_BIG
+from .selection import FAILED, QUEUED, READY, REQUEUED, RUNNING, TOO_BIG
 
+DETAIL_IN_COMMENT = 1500
 MAX_POLLS = 120  # x 30 s = 60 minutes; must match the state machine's Choice
 HEALTH_ATTEMPTS = 30
 
@@ -27,6 +28,7 @@ class TaskDeps:
 def start(event: dict, deps: TaskDeps) -> dict:
     deps.github.add_labels(event["issue"], [RUNNING])
     deps.github.remove_label(event["issue"], QUEUED)
+    deps.github.remove_label(event["issue"], READY)  # a hand-started run skipped intake's swap
     # clientToken makes a Retry-driven re-invocation of Start idempotent: the state
     # machine execution name is stable across retries of the same execution, so a
     # retried Start reuses the same MicroVM instead of orphaning one.
@@ -75,16 +77,20 @@ def finish(event: dict, deps: TaskDeps) -> dict:
     if event.get("microvmId"):
         deps.microvms.terminate(event["microvmId"])
     issue, gh = event["issue"], deps.github
-    outcome = (event.get("result") or {}).get("outcome") if event.get("state") == "done" else None
-    gh.remove_label(issue, QUEUED)
-    gh.remove_label(issue, RUNNING)
+    result = (event.get("result") or {}) if event.get("state") == "done" else {}
+    outcome = result.get("outcome")
+    for label in (QUEUED, RUNNING, REQUEUED):
+        gh.remove_label(issue, label)
     if outcome == "gave_up":
         gh.add_labels(issue, [TOO_BIG])
     elif outcome != "pr_opened":
         gh.add_labels(issue, [FAILED])
-        if outcome is None:  # the worker never reported, so it never commented
-            gh.comment(issue, f"Agent run: **error**\n\n{_why(event)}\n\n"
-                              "The MicroVM was terminated. Re-add `agent:ready` to retry.")
+    if outcome != "pr_opened" and not result.get("commented"):
+        # Nothing reached the issue yet (no report, a config error, a handler crash):
+        # say why here. The detail is already secret-redacted where it was made.
+        detail = str(result.get("detail") or _why(event))[:DETAIL_IN_COMMENT]
+        gh.comment(issue, f"Agent run: **{outcome or 'error'}**\n\n{detail}\n\n"
+                          "The MicroVM was terminated. Re-add `agent:ready` to retry.")
     return {"issue": issue, "outcome": outcome or "error"}
 
 

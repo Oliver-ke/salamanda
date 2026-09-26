@@ -72,6 +72,7 @@ def test_start_swaps_labels_and_runs_a_microvm():
     out = start(dict(EVENT), d)
     assert out["microvmId"] == "mvm-1" and out["polls"] == 0
     assert ("add", 5, ("agent:running",)) in rec.log and ("remove", 5, "agent:queued") in rec.log
+    assert ("remove", 5, "agent:ready") in rec.log  # a hand-started run must not stay ready
     assert ("run", "arn:image", 3900, "exec-1") in rec.log
 
 
@@ -113,7 +114,8 @@ def test_poll_counts_and_reports_state():
                                            ("guardrail_failed", "agent:failed")])
 def test_finish_labels_by_outcome(outcome, label):
     d, rec, _ = make()
-    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": {"outcome": outcome}}, d)
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done",
+            "result": {"outcome": outcome, "detail": "d", "commented": True}}, d)
     assert ("add", 5, (label,)) in rec.log
     assert not any(e[0] == "comment" for e in rec.log)  # the worker already commented
 
@@ -124,6 +126,48 @@ def test_finish_after_a_pr_only_clears_labels():
     assert out["outcome"] == "pr_opened"
     assert not any(e[0] == "add" for e in rec.log)
     assert ("remove", 5, "agent:running") in rec.log
+
+
+def test_finish_removes_requeued_with_the_other_claim_labels():
+    d, rec, _ = make()
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": {"outcome": "pr_opened"}}, d)
+    for label in ("agent:queued", "agent:running", "agent:requeued"):
+        assert ("remove", 5, label) in rec.log
+
+
+def test_finish_explains_a_worker_error_the_worker_could_not_comment_on():
+    d, rec, _ = make()
+    result = {"outcome": "error", "pr_url": None, "detail": "configuration: LOOP_BOT_LOGIN must end in [bot]",
+              "child_issues": [], "commented": False}
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": result}, d)
+    comments = [e[2] for e in rec.log if e[0] == "comment"]
+    assert len(comments) == 1
+    assert "Agent run: **error**" in comments[0] and "configuration:" in comments[0]
+    assert "Re-add `agent:ready` to retry" in comments[0]
+    assert ("add", 5, ("agent:failed",)) in rec.log
+
+
+def test_finish_adds_no_comment_when_the_worker_already_commented():
+    d, rec, _ = make()
+    result = {"outcome": "verify_failed", "pr_url": None, "detail": "still red", "child_issues": [],
+              "commented": True}
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": result}, d)
+    assert not any(e[0] == "comment" for e in rec.log)
+
+
+def test_finish_comment_truncates_a_long_worker_detail():
+    d, rec, _ = make()
+    result = {"outcome": "error", "detail": "x" * 5000, "commented": False}
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": result}, d)
+    comment = next(e[2] for e in rec.log if e[0] == "comment")
+    assert "x" * 1500 in comment and "x" * 1501 not in comment
+
+
+def test_finish_without_a_detail_falls_back_to_why():
+    d, rec, _ = make()
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done", "result": {"outcome": "error"}}, d)
+    comment = next(e[2] for e in rec.log if e[0] == "comment")
+    assert "the worker ended without reporting a result" in comment
 
 
 def test_finish_comment_carries_the_error_but_no_secret():

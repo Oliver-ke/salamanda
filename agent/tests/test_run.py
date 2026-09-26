@@ -68,6 +68,7 @@ def test_happy_path_opens_one_pr_that_closes_the_issue():
     deps, pushed = make_deps(ScriptedAgent(FINISHED))
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "pr_opened" and result.pr_url.endswith("/pull/50")
+    assert result.commented is True
     assert deps.git.calls[0] == ("prepare", SHA, "agent/issue-7-add-expense-form-aaaaaaa")
     assert pushed == ["agent/issue-7-add-expense-form-aaaaaaa"]
     pr = deps.github.prs[0]
@@ -87,7 +88,7 @@ def test_verify_failing_after_retries_opens_no_pr_and_pushes_wip_only_if_guardra
     agent = ScriptedAgent(FINISHED, FINISHED, FINISHED)
     deps, pushed = make_deps(agent, verify_results=(failed(), failed(), failed(output="still red")))
     result = run_job(Job("o/r", 7, SHA), deps)
-    assert result.outcome == "verify_failed"
+    assert result.outcome == "verify_failed" and result.commented is True
     assert deps.github.prs == []
     assert pushed == ["agent/issue-7-add-expense-form-aaaaaaa"]
     assert "still red" in deps.github.comments[-1][1]
@@ -106,6 +107,7 @@ def test_give_up_comments_children_and_opens_nothing():
     deps, pushed = make_deps(ScriptedAgent(AgentOutcome("gave_up", "too big", [101, 102])))
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "gave_up" and result.child_issues == [101, 102]
+    assert result.commented is True
     assert pushed == [] and deps.github.prs == []
     body = deps.github.comments[0][1]
     assert "too big" in body and "#101" in body and "#102" in body
@@ -116,12 +118,14 @@ def test_agent_stopping_without_finishing_is_an_error_with_no_pr(kind):
     deps, pushed = make_deps(ScriptedAgent(AgentOutcome(kind)))
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "error" and kind in result.detail
+    assert result.commented is True
     assert pushed == [] and deps.github.prs == []
 
 
 def test_no_changes_opens_no_pr():
     deps, pushed = make_deps(ScriptedAgent(FINISHED), git=FakeGit(changed=[]))
-    assert run_job(Job("o/r", 7, SHA), deps).outcome == "no_changes"
+    result = run_job(Job("o/r", 7, SHA), deps)
+    assert result.outcome == "no_changes" and result.commented is True
     assert pushed == [] and deps.github.prs == []
 
 
@@ -129,7 +133,7 @@ def test_guardrail_failure_pushes_nothing_and_reports_output():
     deps, pushed = make_deps(ScriptedAgent(FINISHED),
                              check=failed("pr-check", "[protected-path] .github/x.yml"))
     result = run_job(Job("o/r", 7, SHA), deps)
-    assert result.outcome == "guardrail_failed"
+    assert result.outcome == "guardrail_failed" and result.commented is True
     assert pushed == [] and deps.github.prs == []
     assert ".github/x.yml" in deps.github.comments[-1][1]
 
@@ -139,13 +143,15 @@ def test_unexpected_exception_becomes_error_and_is_reported():
     deps, _ = make_deps(ScriptedAgent(), gh=gh)
     result = run_job(Job("o/r", 7, SHA), deps)
     assert result.outcome == "error" and "KeyError" in result.detail
+    assert result.commented is True
     assert gh.comments and gh.comments[0][0] == 7
 
 
 def test_failure_to_comment_on_the_error_path_does_not_raise():
     gh = FakeGitHub(issues={}, fail_comment=True)
     deps, _ = make_deps(ScriptedAgent(), gh=gh)
-    assert run_job(Job("o/r", 7, SHA), deps).outcome == "error"
+    result = run_job(Job("o/r", 7, SHA), deps)
+    assert result.outcome == "error" and result.commented is False
 
 
 def test_error_detail_is_redacted_in_the_comment_and_the_result():

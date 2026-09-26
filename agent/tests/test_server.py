@@ -196,6 +196,7 @@ def test_handler_exception_becomes_an_error_result():
         assert finished.wait(5)
         result = get(srv.port, "/jobs/current")[1]["result"]
         assert result["outcome"] == "error" and "RuntimeError: boom" in result["detail"]
+        assert result["commented"] is False  # the run's finish step comments instead
     finally:
         srv.stop()
 

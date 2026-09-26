@@ -61,6 +61,7 @@ def test_config_error_never_contains_a_secret():
                               run=lambda j, d: None)
     result = handle(JOB, {"anthropic_api_key": "sk-ant-SECRET", "github_app_private_key": "PEM-SECRET"})
     assert result.outcome == "error" and result.detail.startswith("configuration:")
+    assert result.commented is False  # nothing reached the issue: finish must explain it
     assert "SECRET" not in result.detail
 
 

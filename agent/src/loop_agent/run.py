@@ -25,6 +25,7 @@ class RunResult:
     pr_url: str | None
     detail: str
     child_issues: list[int] = field(default_factory=list)
+    commented: bool = False  # True once this result was posted to the issue
 
 
 class AgentSession(Protocol):
@@ -54,7 +55,7 @@ def _tail(text: str) -> str:
 
 def _report(deps: Deps, issue: int, outcome: str, detail: str, children=()) -> RunResult:
     deps.github.comment(issue, f"Agent run: **{outcome}**\n\n{detail}")
-    return RunResult(outcome, None, detail, list(children))
+    return RunResult(outcome, None, detail, list(children), commented=True)
 
 
 def run_job(job: Job, deps: Deps) -> RunResult:
@@ -65,8 +66,8 @@ def run_job(job: Job, deps: Deps) -> RunResult:
         try:
             deps.github.comment(job.issue, f"Agent run: **error**\n\n{detail}")
         except Exception:
-            pass
-        return RunResult("error", None, detail)
+            return RunResult("error", None, detail)
+        return RunResult("error", None, detail, commented=True)
 
 
 def _run(job: Job, deps: Deps) -> RunResult:
@@ -107,7 +108,7 @@ def _run(job: Job, deps: Deps) -> RunResult:
     deps.push(branch)
     pr = deps.github.open_pull_request(head=branch, base="main", title=issue.title, body=body)
     deps.github.comment(issue.number, f"Opened {pr.url}")
-    return RunResult("pr_opened", pr.url, outcome.summary, outcome.child_issues)
+    return RunResult("pr_opened", pr.url, outcome.summary, outcome.child_issues, commented=True)
 
 
 def _verify_failed(job, deps, issue, branch, outcome, verify) -> RunResult:

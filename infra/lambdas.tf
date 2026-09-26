@@ -95,7 +95,8 @@ resource "aws_lambda_function" "intake" {
   timeout       = 60
   memory_size   = 256
   # Never let two intakes race and queue two issues: only one concurrent execution.
-  reserved_concurrent_executions = 1
+  # null skips the reservation on accounts whose concurrency limit is still 10.
+  reserved_concurrent_executions = var.intake_reserved_concurrency
   filename                       = var.lambda_zip
   source_code_hash               = filebase64sha256(var.lambda_zip)
   environment {

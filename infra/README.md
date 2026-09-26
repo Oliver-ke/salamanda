@@ -12,8 +12,11 @@ The agent never touches this directory.
 ## First deploy
 Before the first apply, check the account's unreserved concurrency:
 `aws --profile veroak lambda get-account-settings --query AccountLimit.UnreservedConcurrentExecutions`.
-If it is 10 or less, the intake's `reserved_concurrent_executions = 1` will fail to apply
-(Lambda keeps 10 unreserved). Request a concurrency increase, or temporarily remove that line.
+If it is 10 or less, reserving concurrency for intake fails to apply (Lambda keeps 10
+unreserved). Request a concurrency increase, and until it is granted add
+`intake_reserved_concurrency = null` to `local.tfvars`. One run at a time still holds through the
+labels and the running-execution check; only two intakes firing within seconds of each other is
+no longer ruled out. Remove the line and re-apply once the increase lands.
 
 ```bash
 agent/deploy/package_lambdas.sh                                  # build/lambdas.zip
@@ -67,7 +70,7 @@ Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var
 ## Where the caps are
 | Cap | Where |
 |---|---|
-| One intake at a time | intake Lambda reserved concurrency 1; the schedule never retries |
+| One intake at a time | intake Lambda reserved concurrency 1 (`intake_reserved_concurrency`); the schedule never retries |
 | One run at a time | intake refuses while an execution runs or an issue is `agent:queued`/`agent:running` |
 | Wall clock per run | 120 polls × 30 s in the state machine; `max_run_seconds` (4500 s) on the MicroVM itself |
 | Tool calls per run | `LOOP_MAX_TOOL_CALLS` (default 60) in the image env |

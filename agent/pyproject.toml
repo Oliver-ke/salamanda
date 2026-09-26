@@ -20,3 +20,4 @@ packages = ["src/loop_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

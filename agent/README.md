@@ -1,7 +1,7 @@
 # agent — the loop worker
 
 Takes one GitHub issue, runs a Strands agent on Claude against this repo, and opens
-at most one pull request. Design: `docs/superpowers/specs/2026-09-25-lambda-microvm-loop-design.md`.
+at most one pull request. See [the worker docs](../docs/worker.md) and [architecture](../docs/architecture.md).
 
 ## One-time setup (a human)
 1. **GitHub App** (Settings → Developer settings → GitHub Apps → New):

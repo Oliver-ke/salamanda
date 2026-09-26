@@ -1,0 +1,33 @@
+name: Wake the loop
+
+# A newly approved issue or a merge to main can make work eligible: wake intake now
+# instead of waiting out its backoff. Runs only on the default branch (issues events
+# and pushes to main), which is the only ref the AWS role trusts.
+on:
+  issues:
+    types: [labeled]
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: wake
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    if: vars.AWS_WAKE_ROLE_ARN != '' && (github.event_name == 'push' || github.event.label.name == 'agent:ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_WAKE_ROLE_ARN }}
+          aws-region: eu-west-1
+      - name: Wake intake
+        run: >
+          aws lambda invoke --function-name salamanda-intake --invocation-type Event
+          --cli-binary-format raw-in-base64-out --payload '{"wake":true}' /dev/null

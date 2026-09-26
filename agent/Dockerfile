@@ -15,7 +15,7 @@ RUN uv sync --frozen --no-dev
 # The snapshot: repo cloned and dependencies installed at build time, so runs start warm.
 # The tree belongs to runner (agent-run commands); .git stays root's and read-only to
 # runner, because the worker runs git as root.
-ARG REPO_URL=https://github.com/Oliver-ke/loop-sdlc.git
+ARG REPO_URL=https://github.com/Oliver-ke/salamanda.git
 RUN git clone "$REPO_URL" /workspace/repo \
  && cd /workspace/repo && npm ci \
  && sha256sum package-lock.json | cut -d' ' -f1 > /opt/snapshot-lock.sha256 \

@@ -97,3 +97,19 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Python tests
         run: uv run --frozen pytest -q
+
+  infra:
+    name: infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+      - name: Format
+        run: terraform -chdir=infra fmt -check -recursive
+      - name: Validate
+        run: |
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate

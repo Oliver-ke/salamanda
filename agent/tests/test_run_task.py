@@ -301,3 +301,37 @@ def test_http_json_ok_error_and_network_failure():
     def down(req, timeout):
         raise urllib.error.URLError("refused")
     assert http_json("GET", "https://x/h", {}, opener=down) == (0, {})
+
+
+def test_finish_comment_drops_the_lambda_stack_trace():
+    import json as _json
+    d, rec, _ = make()
+    cause = _json.dumps({"errorMessage": "not authorized to perform: lambda:PassNetworkConnector",
+                         "errorType": "AccessDeniedException",
+                         "stackTrace": ['  File "/var/task/loop_agent/aws/run_task.py", line 35, in start\n']})
+    finish({**EVENT, "error": {"Error": "AccessDeniedException", "Cause": cause}}, d)
+    comment = next(e[2] for e in rec.log if e[0] == "comment")
+    assert "AccessDeniedException: not authorized to perform: lambda:PassNetworkConnector" in comment
+    assert "stackTrace" not in comment and "/var/task" not in comment
+
+
+def test_finish_keeps_a_non_json_cause_as_is():
+    d, rec, _ = make()
+    finish({**EVENT, "error": {"Error": "States.Timeout", "Cause": "Task timed out after 420 s"}}, d)
+    comment = next(e[2] for e in rec.log if e[0] == "comment")
+    assert "States.Timeout: Task timed out after 420 s" in comment
+
+
+def test_finish_comment_redacts_credentials_in_urls():
+    d, rec, _ = make()
+    detail = "GitError: git push failed: fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git"
+    finish({**EVENT, "microvmId": "mvm-1", "state": "done",
+            "result": {"outcome": "error", "detail": detail, "commented": False}}, d)
+    comment = next(e[2] for e in rec.log if e[0] == "comment")
+    assert "ghs_SECRET" not in comment and "https://***@github.com" in comment
+
+
+def test_start_clears_the_requeue_marker():
+    d, rec, _ = make()
+    start(dict(EVENT), d)
+    assert ("remove", 5, "agent:requeued") in rec.log

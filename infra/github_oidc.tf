@@ -25,7 +25,7 @@ data "aws_iam_policy_document" "wake_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.repo}:ref:refs/heads/main"]
+      values   = ["${coalesce(var.github_oidc_sub_prefix, "repo:${var.repo}")}:ref:refs/heads/main"]
     }
   }
 }

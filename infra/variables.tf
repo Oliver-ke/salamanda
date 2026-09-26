@@ -66,6 +66,12 @@ variable "intake_sleep_minutes" {
   description = "Longest wait while idle: the wait doubles from the base each idle tick until it reaches this"
 }
 
+variable "github_oidc_sub_prefix" {
+  type        = string
+  default     = null
+  description = "Subject prefix in the repo's GitHub OIDC tokens. null means the default `repo:<owner>/<repo>`; repos with immutable subject claims use `repo:<owner>@<owner_id>/<repo>@<repo_id>` (see `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`)"
+}
+
 variable "github_oidc_provider_arn" {
   type        = string
   default     = null

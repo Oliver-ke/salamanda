@@ -41,6 +41,8 @@ gh variable set AWS_WAKE_ROLE_ARN -R Oliver-ke/salamanda --body "$(terraform -ch
 ```
 If the account already has a GitHub OIDC provider (`aws iam list-open-id-connect-providers`), set
 `github_oidc_provider_arn` to its ARN in `local.tfvars`: an account can hold only one.
+If the repo uses immutable OIDC subject claims (`gh api repos/Oliver-ke/salamanda/actions/oidc/customization/sub`
+shows a `sub_claim_prefix`), set `github_oidc_sub_prefix` to that prefix, or the wake role can't be assumed.
 
 ## First run, by hand
 Send the job through the queue, as intake would, so the Pipe is exercised with someone watching.

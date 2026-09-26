@@ -40,7 +40,7 @@ def main(argv=None) -> int:
         result = run_job(job, deps)
         _print(job, result)
         return 0 if result.outcome == "pr_opened" else 1
-    JobServer(lambda job: run_job(job, deps), _print, expected_repo=config.repo,
+    JobServer(lambda job, secrets: run_job(job, deps), _print, expected_repo=config.repo,
               port=args.port, once=True).serve_forever()
     return 0
 

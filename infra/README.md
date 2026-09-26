@@ -1,10 +1,56 @@
 # infra
 
-Terraform for the AWS side of the loop: EventBridge Scheduler, SQS, Step Functions,
-the intake and bug-finder Lambdas, the worker's Lambda MicroVM image, IAM and secrets.
-Built in Plan 2.
+Terraform for the AWS side of the loop (eu-west-1): the intake Lambda on a schedule, the SQS FIFO
+queue and its dead-letter queue, an EventBridge Pipe into the `run-task` Step Functions state
+machine, its four task Lambdas, the image build role and artifact bucket, and two Secrets Manager
+secrets. The MicroVM image itself is built by `agent/deploy/build_image.py`, because Terraform
+can't set its `/ready` hook.
 
-Terraform is human-only. CI runs `fmt -check`, `validate` and `plan` with read-only
-credentials; a human runs `apply`. The agent never touches this directory:
-`harness/src/protected.mjs` lists `infra/`, and `pr-rules` fails any bot pull request
-that changes it.
+Terraform is human-only. CI runs `fmt -check` and `validate`; a human runs `plan` and `apply`.
+The agent never touches this directory.
+
+## First deploy
+```bash
+agent/deploy/package_lambdas.sh                                  # build/lambdas.zip
+cp infra/example.tfvars infra/local.tfvars                       # edit if needed; not committed
+terraform -chdir=infra init
+terraform -chdir=infra apply -var-file=local.tfvars              # schedule stays DISABLED
+
+# Secrets (values never go through Terraform or git)
+aws --profile veroak secretsmanager put-secret-value --secret-id "$(terraform -chdir=infra output -raw anthropic_secret_arn)" \
+  --secret-string "$(cat ~/.config/loop-sdlc/anthropic.key)"
+aws --profile veroak secretsmanager put-secret-value --secret-id "$(terraform -chdir=infra output -raw github_key_secret_arn)" \
+  --secret-string "$(cat ~/.config/loop-sdlc/app.pem)"
+
+# Image: non-secret settings only
+grep -vE '^(ANTHROPIC_API_KEY|GITHUB_APP_PRIVATE_KEY)' ~/.config/loop-sdlc/worker.env > /tmp/image.env
+(cd agent && uv run python -m deploy.build_image --profile veroak \
+  --bucket "$(terraform -chdir=../infra output -raw artifact_bucket)" \
+  --build-role-arn "$(terraform -chdir=../infra output -raw build_role_arn)" --env-file /tmp/image.env)
+```
+
+## First run, by hand
+```bash
+SHA=$(gh api repos/Oliver-ke/salamanda/branches/main --jq .commit.sha)
+aws --profile veroak stepfunctions start-execution \
+  --state-machine-arn "$(terraform -chdir=infra output -raw state_machine_arn)" \
+  --input "{\"repo\":\"Oliver-ke/salamanda\",\"issue\":<N>,\"sha\":\"$SHA\"}"
+```
+Watch it in the Step Functions console. Expect a PR (or an issue comment) and a terminated MicroVM.
+Then turn the loop on: `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=true`.
+
+## Stopping it (any one is enough)
+| Stop | Command |
+|---|---|
+| No new runs | `terraform -chdir=infra apply -var-file=local.tfvars -var schedule_enabled=false` (or disable the schedule in the console) |
+| The run in flight | `aws stepfunctions stop-execution --execution-arn <arn>` (then `aws lambda-microvms terminate-microvm` if it was mid-run: stopping skips the finish step) |
+| Everything, hard | Suspend the GitHub App installation, or revoke the Anthropic key: every run then fails closed |
+
+## Where the caps are
+| Cap | Where |
+|---|---|
+| One intake at a time | intake Lambda reserved concurrency 1; the schedule never retries |
+| One run at a time | intake refuses while an execution runs or an issue is `agent:queued`/`agent:running` |
+| Wall clock per run | 120 polls × 30 s in the state machine; `max_run_seconds` (3900 s) on the MicroVM itself |
+| Tool calls per run | `LOOP_MAX_TOOL_CALLS` (default 60) in the image env |
+| Model spend | the Anthropic Console spend limit on the key's workspace |

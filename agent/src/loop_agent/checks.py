@@ -4,14 +4,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .commands import CommandResult, as_user, child_env, grouped_run
+from .commands import CommandResult, as_user, child_env, grouped_run, sweep_user
 
 NPM_CI_TIMEOUT_S = 900
 PR_CHECK_TIMEOUT_S = 120
 
 
 def ensure_dependencies(repo_dir: Path, snapshot_hash_file: Path | None,
-                        command_user: str | None = None, runner=grouped_run) -> bool:
+                        command_user: str | None = None, runner=grouped_run,
+                        sweep=sweep_user) -> bool:
     """Run `npm ci` only when the lockfile differs from the image snapshot's."""
     current = hashlib.sha256((repo_dir / "package-lock.json").read_bytes()).hexdigest()
     if (snapshot_hash_file is not None and snapshot_hash_file.exists()
@@ -20,8 +21,12 @@ def ensure_dependencies(repo_dir: Path, snapshot_hash_file: Path | None,
         return False
     argv = as_user(["npm", "ci"], command_user)
     # A timeout raises subprocess.TimeoutExpired; the job reports it as an error.
-    proc = runner(argv, cwd=repo_dir, timeout=NPM_CI_TIMEOUT_S,
-                  env=child_env(os.environ, command_user))
+    try:
+        proc = runner(argv, cwd=repo_dir, timeout=NPM_CI_TIMEOUT_S,
+                      env=child_env(os.environ, command_user))
+    finally:
+        if command_user is not None:
+            sweep(command_user)
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, argv,
                                             output=(proc.stdout or "")[-4000:])

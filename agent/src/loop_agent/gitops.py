@@ -74,5 +74,8 @@ class Git:
     def push(self, branch: str, url: str, env: Mapping[str, str] | None = None) -> None:
         """`env` carries the credential (GIT_CONFIG_* extraheader), so it never
         appears in argv, which every process in the container can read."""
-        # --force: agent/* branches belong to the worker. main is protected server-side.
-        self._git("push", "--force", url, f"HEAD:refs/heads/{branch}", env=env)
+        # The lease with an empty expected value means "the branch must not exist": a
+        # retry that lands on the same name fails instead of rewriting a branch an
+        # open pull request may be showing.
+        ref = f"refs/heads/{branch}"
+        self._git("push", f"--force-with-lease={ref}:", url, f"HEAD:{ref}", env=env)

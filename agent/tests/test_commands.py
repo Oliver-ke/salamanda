@@ -135,3 +135,57 @@ def test_run_allowed_runs_in_its_own_process_group_by_default(tmp_path, monkeypa
     result = run_allowed("npm run lint", tmp_path, timeout=7)
     assert seen == {"argv": ["npm", "run", "lint"], "timeout": 7}
     assert result.exit_code == 0 and result.output == "ok"
+
+
+def _fake_proc(tmp_path, procs):
+    """procs: {pid: real_uid}. Writes /proc/<pid>/status files the sweep reads."""
+    root = tmp_path / "proc"
+    root.mkdir()
+    (root / "self").mkdir()  # non-numeric entries are ignored
+    for pid, uid in procs.items():
+        (root / str(pid)).mkdir()
+        (root / str(pid) / "status").write_text(f"Name:\tnode\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+    return root
+
+
+def test_kill_user_processes_kills_only_that_uid_until_none_remain(tmp_path):
+    from loop_agent.commands import kill_user_processes
+    root = _fake_proc(tmp_path, {101: 10001, 102: 0, 103: 10001})
+    killed = []
+
+    def kill(pid, sig):
+        killed.append(pid)
+        (root / str(pid) / "status").unlink()
+        (root / str(pid)).rmdir()
+
+    kill_user_processes(10001, proc_root=root, kill=kill)
+    assert sorted(killed) == [101, 103]
+    assert (root / "102").exists()
+
+
+def test_kill_user_processes_ignores_processes_that_vanish(tmp_path):
+    from loop_agent.commands import kill_user_processes
+    root = _fake_proc(tmp_path, {201: 10001})
+
+    def kill(pid, sig):
+        (root / str(pid) / "status").unlink()
+        (root / str(pid)).rmdir()
+        raise ProcessLookupError
+
+    kill_user_processes(10001, proc_root=root, kill=kill)  # no exception
+
+
+def test_run_allowed_sweeps_the_command_users_processes_afterwards(tmp_path):
+    """A detached child (setsid) escapes the process group; the uid-wide sweep does not
+    let it survive the command — even when the command itself fails or times out."""
+    swept = []
+
+    def fake_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 5)
+
+    run_allowed("npm run verify", tmp_path, command_user="runner", runner=fake_run,
+                sweep=lambda user: swept.append(user))
+    assert swept == ["runner"]
+
+    run_allowed("npm run verify", tmp_path, runner=fake_run, sweep=lambda user: swept.append(user))
+    assert swept == ["runner"]  # no command user → nothing to sweep

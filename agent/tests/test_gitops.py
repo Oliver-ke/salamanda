@@ -167,3 +167,23 @@ def test_worker_git_refuses_a_git_dir_others_can_write(remote_and_clone):
     (clone / ".git").chmod(0o777)
     with pytest.raises(GitError, match="writable"):
         make(clone).prepare(sha, "agent/issue-7-x")
+
+
+def test_push_never_overwrites_an_existing_branch(remote_and_clone):
+    """A retried issue against the same main gets the same branch name. The push must
+    fail loudly rather than rewrite a branch an open pull request may be showing."""
+    remote, clone, sha = remote_and_clone
+    g = make(clone)
+    g.prepare(sha, "agent/issue-7-x")
+    (clone / "b.txt").write_text("first attempt\n")
+    g.stage_all()
+    first = g.commit("first attempt")
+    g.push("agent/issue-7-x", str(remote))
+
+    g.prepare(sha, "agent/issue-7-x")
+    (clone / "b.txt").write_text("second attempt\n")
+    g.stage_all()
+    g.commit("second attempt")
+    with pytest.raises(GitError, match="push failed"):
+        g.push("agent/issue-7-x", str(remote))
+    assert git(remote, "rev-parse", "refs/heads/agent/issue-7-x").strip() == first

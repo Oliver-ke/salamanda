@@ -90,6 +90,45 @@ def run_in_group(argv: list[str], *, cwd: Path, env: Mapping[str, str],
         return code, out.read().decode("utf-8", errors="replace")
 
 
+SWEEP_ROUNDS = 50
+
+
+def _real_uid(status_file: Path) -> int | None:
+    try:
+        for line in status_file.read_text().splitlines():
+            if line.startswith("Uid:"):
+                return int(line.split()[1])
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, IndexError):
+        return None
+    return None
+
+
+def kill_user_processes(uid: int, *, proc_root: Path = Path("/proc"), kill=os.kill) -> None:
+    """SIGKILL every process whose real uid is `uid`, repeating until none are left.
+    The process-group kill misses anything that called setsid (Node's
+    spawn({detached: true}) does); this sweep does not, so nothing the command user
+    starts can outlive its command and race the worker."""
+    for _ in range(SWEEP_ROUNDS):
+        pids = [int(entry.name) for entry in proc_root.iterdir()
+                if entry.name.isdigit() and _real_uid(entry / "status") == uid]
+        if not pids:
+            return
+        for pid in pids:
+            try:
+                kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def sweep_user(command_user: str) -> None:
+    import pwd
+    try:
+        uid = pwd.getpwnam(command_user).pw_uid
+    except KeyError:
+        return  # no such user, so no process can be running as it
+    kill_user_processes(uid)
+
+
 def grouped_run(argv: list[str], *, cwd: Path, env: Mapping[str, str], timeout: float,
                 **_ignored) -> subprocess.CompletedProcess:
     """run_in_group behind the subprocess.run-shaped seam the tests inject."""
@@ -98,12 +137,16 @@ def grouped_run(argv: list[str], *, cwd: Path, env: Mapping[str, str], timeout: 
 
 
 def run_allowed(cmd: str, cwd: Path, *, timeout: int = 900,
-                command_user: str | None = None, runner=grouped_run) -> CommandResult:
+                command_user: str | None = None, runner=grouped_run,
+                sweep=sweep_user) -> CommandResult:
     argv = parse_allowed(cmd)
     try:
         proc = runner(as_user(argv, command_user), cwd=cwd, timeout=timeout,
                       env=child_env(os.environ, command_user))
     except subprocess.TimeoutExpired:
         return CommandResult(cmd, 124, f"timed out after {timeout}s")
+    finally:
+        if command_user is not None:
+            sweep(command_user)
     output = (proc.stdout or "") + (proc.stderr or "")
     return CommandResult(cmd, proc.returncode, output[-OUTPUT_TAIL:])

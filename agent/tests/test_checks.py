@@ -124,3 +124,17 @@ def test_pr_check_uses_the_base_harness_not_the_working_tree(tmp_path):
     git(root, "commit", "-am", "neuter")
     result = run_pr_check(root, base, "loop-sdlc[bot]", "Closes #7")
     assert result.exit_code != 0 and "harness/src/protected.mjs is a protected path" in result.output
+
+
+def test_ensure_dependencies_sweeps_the_command_users_processes(tmp_path):
+    (tmp_path / "package-lock.json").write_text("{}")
+    swept = []
+
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, stdout="npm ERR!")
+
+    import pytest
+    with pytest.raises(subprocess.CalledProcessError):
+        ensure_dependencies(tmp_path, None, command_user="runner", runner=runner,
+                            sweep=lambda user: swept.append(user))
+    assert swept == ["runner"]

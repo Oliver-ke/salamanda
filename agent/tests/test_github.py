@@ -110,3 +110,63 @@ def test_push_auth_keeps_the_token_out_of_the_url(keypair):
     scheme, encoded = env["GIT_CONFIG_VALUE_0"].removeprefix("AUTHORIZATION: ").split()
     assert scheme == "basic" and base64.b64decode(encoded) == b"x-access-token:ghs_abc"
     assert not hasattr(c, "push_url")
+
+
+def test_list_issues_pages_and_skips_pull_requests(keypair):
+    def handler(req):
+        if req.url.path.endswith("access_tokens"):
+            return token_response()
+        assert req.url.params["labels"] == "agent:ready" and req.url.params["state"] == "open"
+        page = int(req.url.params["page"])
+        if page == 1:
+            items = [{"number": n, "title": "t", "body": None, "labels": [{"name": "agent:ready"}],
+                      "updated_at": "2026-09-26T10:00:00Z"} for n in range(1, 101)]
+            items[0]["pull_request"] = {}
+            return httpx.Response(200, json=items)
+        return httpx.Response(200, json=[{"number": 101, "title": "t", "body": "b", "labels": [],
+                                          "updated_at": ""}])
+
+    issues = client(keypair, handler).list_issues("agent:ready")
+    assert [i.number for i in issues] == list(range(2, 102))
+    assert issues[0].updated_at == "2026-09-26T10:00:00Z" and issues[0].body == ""
+
+
+def test_issue_state_open_closed_pr_and_missing(keypair):
+    def handler(req):
+        if req.url.path.endswith("access_tokens"):
+            return token_response()
+        n = int(req.url.path.rsplit("/", 1)[1])
+        if n == 404:
+            return httpx.Response(404, json={"message": "Not Found"})
+        body = {"number": n, "title": "t", "labels": [], "state": "closed" if n == 2 else "open"}
+        if n == 3:
+            body["pull_request"] = {}
+        return httpx.Response(200, json=body)
+
+    c = client(keypair, handler)
+    assert [c.issue_state(n) for n in (1, 2, 3, 404)] == ["open", "closed", None, None]
+
+
+def test_labels_prs_and_branch_sha(keypair):
+    seen = []
+
+    def handler(req):
+        if req.url.path.endswith("access_tokens"):
+            return token_response()
+        seen.append((req.method, req.url.raw_path.decode(), json.loads(req.content or b"null")))
+        if req.url.path == "/repos/o/r/pulls":
+            return httpx.Response(200, json=[{"number": 4, "body": "Closes #3"}, {"number": 9, "body": None}])
+        if req.url.path == "/repos/o/r/branches/main":
+            return httpx.Response(200, json={"commit": {"sha": "f" * 40}})
+        if req.method == "DELETE" and "agent%3Amissing" in req.url.raw_path.decode():
+            return httpx.Response(404, json={"message": "Label does not exist"})
+        return httpx.Response(200, json=[])
+
+    c = client(keypair, handler)
+    c.add_labels(5, ["agent:queued"])
+    c.remove_label(5, "agent:ready")
+    c.remove_label(5, "agent:missing")  # absent label: ignored
+    assert c.list_open_pull_requests() == [(4, "Closes #3"), (9, "")]
+    assert c.branch_sha() == "f" * 40
+    assert seen[0] == ("POST", "/repos/o/r/issues/5/labels", {"labels": ["agent:queued"]})
+    assert seen[1][:2] == ("DELETE", "/repos/o/r/issues/5/labels/agent%3Aready")

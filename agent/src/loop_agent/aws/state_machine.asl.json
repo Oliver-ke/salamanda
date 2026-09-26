@@ -1,0 +1,41 @@
+{
+  "Comment": "One issue, one Lambda MicroVM, always terminated.",
+  "StartAt": "Start",
+  "States": {
+    "Start": {
+      "Type": "Task",
+      "Resource": "${start_arn}",
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2}],
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Finish"}],
+      "Next": "Dispatch"
+    },
+    "Dispatch": {
+      "Type": "Task",
+      "Resource": "${dispatch_arn}",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Finish"}],
+      "Next": "Wait"
+    },
+    "Wait": {"Type": "Wait", "Seconds": 30, "Next": "Poll"},
+    "Poll": {
+      "Type": "Task",
+      "Resource": "${poll_arn}",
+      "Retry": [{"ErrorEquals": ["States.ALL"], "IntervalSeconds": 10, "MaxAttempts": 3, "BackoffRate": 2}],
+      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Finish"}],
+      "Next": "Done?"
+    },
+    "Done?": {
+      "Type": "Choice",
+      "Choices": [
+        {"Variable": "$.state", "StringEquals": "done", "Next": "Finish"},
+        {"Variable": "$.polls", "NumericGreaterThanEquals": 120, "Next": "Finish"}
+      ],
+      "Default": "Wait"
+    },
+    "Finish": {
+      "Type": "Task",
+      "Resource": "${finish_arn}",
+      "Retry": [{"ErrorEquals": ["States.ALL"], "IntervalSeconds": 10, "MaxAttempts": 3, "BackoffRate": 2}],
+      "End": true
+    }
+  }
+}

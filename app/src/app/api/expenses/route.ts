@@ -2,6 +2,7 @@ import {
   addExpense,
   ExpenseValidationError,
   loadExpenses,
+  newestFirst,
   type ExpenseInput,
 } from '@/lib/expenses';
 
@@ -10,9 +11,7 @@ export const runtime = 'nodejs';
 
 /** Lists all expenses, newest date first (later-added first among equal dates). */
 export async function GET(): Promise<Response> {
-  const expenses = (await loadExpenses())
-    .reverse()
-    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const expenses = newestFirst(await loadExpenses());
   return Response.json({ expenses });
 }
 

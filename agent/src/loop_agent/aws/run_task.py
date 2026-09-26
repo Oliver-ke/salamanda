@@ -1,11 +1,13 @@
 """Step Functions task Lambdas: one issue, one MicroVM, always terminated.
 The event never carries secrets; dispatch reads them and sends them straight to the worker."""
 
+import json
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from ..gitops import redact
 from .microvm import http_json
 from .selection import FAILED, QUEUED, READY, REQUEUED, RUNNING, TOO_BIG
 
@@ -29,6 +31,8 @@ def start(event: dict, deps: TaskDeps) -> dict:
     deps.github.add_labels(event["issue"], [RUNNING])
     deps.github.remove_label(event["issue"], QUEUED)
     deps.github.remove_label(event["issue"], READY)  # a hand-started run skipped intake's swap
+    # A started run proves the job got through: a later, unrelated stall gets its one requeue again.
+    deps.github.remove_label(event["issue"], REQUEUED)
     # clientToken makes a Retry-driven re-invocation of Start idempotent: the state
     # machine execution name is stable across retries of the same execution, so a
     # retried Start reuses the same MicroVM instead of orphaning one.
@@ -63,10 +67,22 @@ def poll(event: dict, deps: TaskDeps) -> dict:
             "result": body.get("result")}
 
 
+def _cause(cause) -> str:
+    """A Lambda failure's Cause is JSON with errorMessage/errorType/stackTrace:
+    keep the message, drop the stack trace. Anything else is kept as-is."""
+    try:
+        data = json.loads(cause)
+    except (TypeError, ValueError):
+        return str(cause)
+    if isinstance(data, dict) and "errorMessage" in data:
+        return str(data["errorMessage"])
+    return str(cause)
+
+
 def _why(event: dict) -> str:
     if "error" in event:
         err = event["error"] or {}
-        return f"{err.get('Error', 'error')}: {str(err.get('Cause', ''))[:1500]}"
+        return f"{err.get('Error', 'error')}: {_cause(err.get('Cause', ''))[:DETAIL_IN_COMMENT]}"
     if event.get("polls", 0) >= MAX_POLLS:
         return "timed out after 60 minutes"
     return "the worker ended without reporting a result"
@@ -88,7 +104,8 @@ def finish(event: dict, deps: TaskDeps) -> dict:
     if outcome != "pr_opened" and not result.get("commented"):
         # Nothing reached the issue yet (no report, a config error, a handler crash):
         # say why here. The detail is already secret-redacted where it was made.
-        detail = str(result.get("detail") or _why(event))[:DETAIL_IN_COMMENT]
+        # redact(): no credential-bearing URL reaches a public comment, whoever built the text.
+        detail = redact(str(result.get("detail") or _why(event)))[:DETAIL_IN_COMMENT]
         gh.comment(issue, f"Agent run: **{outcome or 'error'}**\n\n{detail}\n\n"
                           "The MicroVM was terminated. Re-add `agent:ready` to retry.")
     return {"issue": issue, "outcome": outcome or "error"}

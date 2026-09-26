@@ -27,7 +27,10 @@ class TaskDeps:
 def start(event: dict, deps: TaskDeps) -> dict:
     deps.github.add_labels(event["issue"], [RUNNING])
     deps.github.remove_label(event["issue"], QUEUED)
-    vm = deps.microvms.run(deps.image_arn, deps.max_duration_s)
+    # clientToken makes a Retry-driven re-invocation of Start idempotent: the state
+    # machine execution name is stable across retries of the same execution, so a
+    # retried Start reuses the same MicroVM instead of orphaning one.
+    vm = deps.microvms.run(deps.image_arn, deps.max_duration_s, event["execution"])
     return {**event, **vm, "polls": 0}
 
 
@@ -36,7 +39,7 @@ def dispatch(event: dict, deps: TaskDeps) -> dict:
     base = f"https://{deps.microvms.wait_running(vm)}"
     headers = deps.microvms.auth_headers(vm)
     for _ in range(HEALTH_ATTEMPTS):
-        if deps.http("GET", f"{base}/health", headers)[0] == 200:
+        if deps.http("GET", f"{base}/health", headers, timeout=5)[0] == 200:
             break
         deps.sleep(2)
     else:

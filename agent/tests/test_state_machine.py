@@ -47,3 +47,9 @@ def test_poll_cap_matches_the_code():
     choice = machine()["States"]["Done?"]
     caps = [c for c in choice["Choices"] if c.get("Variable") == "$.polls"]
     assert caps[0]["NumericGreaterThanEquals"] == MAX_POLLS
+
+
+def test_start_parameters_pass_the_execution_name_and_job_fields():
+    params = machine()["States"]["Start"]["Parameters"]
+    assert params["execution.$"] == "$$.Execution.Name"
+    assert params["repo.$"] == "$.repo" and params["issue.$"] == "$.issue" and params["sha.$"] == "$.sha"

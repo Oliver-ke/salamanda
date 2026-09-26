@@ -5,6 +5,7 @@
     "Start": {
       "Type": "Task",
       "Resource": "${start_arn}",
+      "Parameters": {"repo.$": "$.repo", "issue.$": "$.issue", "sha.$": "$.sha", "execution.$": "$$.Execution.Name"},
       "Retry": [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2}],
       "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Finish"}],
       "Next": "Dispatch"

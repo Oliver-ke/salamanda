@@ -32,13 +32,14 @@ class MicroVMs:
     def __init__(self, client, region: str, sleep=time.sleep, clock=time.monotonic):
         self.client, self.region, self.sleep, self.clock = client, region, sleep, clock
 
-    def run(self, image_arn: str, max_duration_s: int) -> dict:
+    def run(self, image_arn: str, max_duration_s: int, client_token: str) -> dict:
         out = self.client.run_microvm(
             imageIdentifier=image_arn, maximumDurationInSeconds=max_duration_s,
             ingressNetworkConnectors=[INGRESS.format(region=self.region)],
             egressNetworkConnectors=[EGRESS.format(region=self.region)],
             idlePolicy={"maxIdleDurationSeconds": 3600, "suspendedDurationSeconds": 60,
-                        "autoResumeEnabled": True})
+                        "autoResumeEnabled": True},
+            clientToken=client_token)
         return {"microvmId": out["microvmId"]}
 
     def wait_running(self, microvm_id: str, timeout_s: float = 120) -> str:
@@ -46,8 +47,8 @@ class MicroVMs:
         while True:
             vm = self.client.get_microvm(microvmIdentifier=microvm_id)
             if vm["state"] == "RUNNING":
-                return vm["endpoint"]
-            if vm["state"] in ("TERMINATED", "FAILED") or self.clock() > deadline:
+                return vm["endpoint"].removeprefix("https://").removeprefix("http://").rstrip("/")
+            if vm["state"] in ("TERMINATED", "TERMINATING", "FAILED") or self.clock() > deadline:
                 raise RuntimeError(f"MicroVM {microvm_id} is {vm['state']}: {vm.get('stateReason')}")
             self.sleep(2)
 
@@ -58,5 +59,5 @@ class MicroVMs:
     def terminate(self, microvm_id: str) -> None:
         try:
             self.client.terminate_microvm(microvmIdentifier=microvm_id)
-        except self.client.exceptions.ResourceNotFoundException:
+        except (self.client.exceptions.ResourceNotFoundException, self.client.exceptions.ConflictException):
             pass

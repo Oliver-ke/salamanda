@@ -4,10 +4,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from loop_agent.aws.microvm import http_json
+from loop_agent.aws.microvm import MicroVMs, http_json
 from loop_agent.aws.run_task import MAX_POLLS, TaskDeps, dispatch, finish, poll, start
 
-EVENT = {"repo": "o/r", "issue": 5, "sha": "c" * 40}
+EVENT = {"repo": "o/r", "issue": 5, "sha": "c" * 40, "execution": "exec-1"}
+JOB = {"repo": EVENT["repo"], "issue": EVENT["issue"], "sha": EVENT["sha"]}
 SECRETS = {"anthropic_api_key": "sk-ant-SECRET", "github_app_private_key": "PEM-SECRET"}
 
 
@@ -35,8 +36,8 @@ class FakeVMs:
     def __init__(self, log):
         self.log = log
 
-    def run(self, image_arn, max_duration_s):
-        self.log.append(("run", image_arn, max_duration_s))
+    def run(self, image_arn, max_duration_s, client_token):
+        self.log.append(("run", image_arn, max_duration_s, client_token))
         return {"microvmId": "mvm-1"}
 
     def wait_running(self, microvm_id, timeout_s=120):
@@ -53,7 +54,7 @@ def make(http=None, fail_github=False):
     rec = Recorder(fail_github=fail_github)
     calls = []
 
-    def default_http(method, url, headers, body=None):
+    def default_http(method, url, headers, body=None, timeout=30):
         calls.append((method, url, headers, body))
         if url.endswith("/health"):
             return 200, {"busy": False}
@@ -71,13 +72,13 @@ def test_start_swaps_labels_and_runs_a_microvm():
     out = start(dict(EVENT), d)
     assert out["microvmId"] == "mvm-1" and out["polls"] == 0
     assert ("add", 5, ("agent:running",)) in rec.log and ("remove", 5, "agent:queued") in rec.log
-    assert ("run", "arn:image", 3900) in rec.log
+    assert ("run", "arn:image", 3900, "exec-1") in rec.log
 
 
 def test_dispatch_waits_for_health_then_posts_job_with_secrets():
     attempts = []
 
-    def http(method, url, headers, body=None):
+    def http(method, url, headers, body=None, timeout=30):
         attempts.append((method, url, body))
         if url.endswith("/health"):
             return (0, {}) if len(attempts) < 3 else (200, {"busy": False})
@@ -87,21 +88,23 @@ def test_dispatch_waits_for_health_then_posts_job_with_secrets():
     out = dispatch({**EVENT, "microvmId": "mvm-1", "polls": 0}, d)
     method, url, body = attempts[-1]
     assert (method, url) == ("POST", "https://mvm-1.lambda-microvm.eu-west-1.on.aws/jobs")
-    assert body == {**EVENT, "secrets": SECRETS}
+    assert body == {**JOB, "secrets": SECRETS}
     assert "secrets" not in out and "SECRET" not in str(out)
 
 
 def test_dispatch_raises_when_worker_refuses_or_never_answers():
-    d, _, _ = make(http=lambda m, u, h, b=None: (200, {}) if u.endswith("/health") else (409, {"error": "busy"}))
+    d, _, _ = make(http=lambda m, u, h, b=None, timeout=30: (200, {}) if u.endswith("/health")
+                    else (409, {"error": "busy"}))
     with pytest.raises(RuntimeError, match="409"):
         dispatch({**EVENT, "microvmId": "mvm-1"}, d)
-    d, _, _ = make(http=lambda m, u, h, b=None: (0, {}))
+    d, _, _ = make(http=lambda m, u, h, b=None, timeout=30: (0, {}))
     with pytest.raises(RuntimeError, match="health"):
         dispatch({**EVENT, "microvmId": "mvm-1"}, d)
 
 
 def test_poll_counts_and_reports_state():
-    d, _, _ = make(http=lambda m, u, h, b=None: (200, {"state": "done", "result": {"outcome": "pr_opened"}}))
+    d, _, _ = make(http=lambda m, u, h, b=None, timeout=30: (200, {"state": "done",
+                                                                    "result": {"outcome": "pr_opened"}}))
     out = poll({**EVENT, "microvmId": "mvm-1", "polls": 4}, d)
     assert out["polls"] == 5 and out["state"] == "done" and out["result"]["outcome"] == "pr_opened"
 
@@ -159,6 +162,89 @@ class FakeResp(io.BytesIO):
 
     def __exit__(self, *a):
         return False
+
+
+class FakeMicrovmsClient:
+    class exceptions:
+        class ResourceNotFoundException(Exception):
+            pass
+
+        class ConflictException(Exception):
+            pass
+
+    def __init__(self, states=None, terminate_raises=None):
+        self.states = list(states or [])
+        self.run_calls = []
+        self.terminate_calls = []
+        self.terminate_raises = terminate_raises
+
+    def run_microvm(self, **kwargs):
+        self.run_calls.append(kwargs)
+        return {"microvmId": "mvm-9"}
+
+    def get_microvm(self, microvmIdentifier):
+        return self.states.pop(0)
+
+    def create_microvm_auth_token(self, **kwargs):
+        return {"authToken": {"X-aws-proxy-auth": "tok"}}
+
+    def terminate_microvm(self, microvmIdentifier):
+        self.terminate_calls.append(microvmIdentifier)
+        if self.terminate_raises:
+            raise self.terminate_raises
+
+
+def test_microvms_run_passes_no_execution_role_and_region_scoped_connectors():
+    client = FakeMicrovmsClient()
+    vms = MicroVMs(client, "eu-west-1")
+    out = vms.run("arn:image", 3900, "exec-1")
+    assert out == {"microvmId": "mvm-9"}
+    kwargs = client.run_calls[0]
+    assert "executionRoleArn" not in kwargs
+    assert kwargs["clientToken"] == "exec-1"
+    assert "eu-west-1" in kwargs["ingressNetworkConnectors"][0]
+    assert "eu-west-1" in kwargs["egressNetworkConnectors"][0]
+
+
+def test_microvms_wait_running_returns_endpoint_without_scheme_or_trailing_slash():
+    client = FakeMicrovmsClient(states=[{"state": "RUNNING",
+                                         "endpoint": "https://mvm-1.lambda-microvm.eu-west-1.on.aws/"}])
+    vms = MicroVMs(client, "eu-west-1", sleep=lambda s: None)
+    assert vms.wait_running("mvm-1") == "mvm-1.lambda-microvm.eu-west-1.on.aws"
+
+
+@pytest.mark.parametrize("state", ["TERMINATED", "TERMINATING"])
+def test_microvms_wait_running_raises_on_terminal_states(state):
+    client = FakeMicrovmsClient(states=[{"state": state, "endpoint": "x", "stateReason": "boom"}])
+    vms = MicroVMs(client, "eu-west-1", sleep=lambda s: None)
+    with pytest.raises(RuntimeError, match=state):
+        vms.wait_running("mvm-1")
+
+
+def test_microvms_wait_running_raises_at_the_deadline():
+    states = [{"state": "PENDING", "endpoint": "x"}, {"state": "PENDING", "endpoint": "x"}]
+    client = FakeMicrovmsClient(states=states)
+    clock = iter([0, 1, 200])  # deadline check, then an in-loop check that jumps past it
+    vms = MicroVMs(client, "eu-west-1", sleep=lambda s: None, clock=lambda: next(clock))
+    with pytest.raises(RuntimeError, match="PENDING"):
+        vms.wait_running("mvm-1")
+
+
+@pytest.mark.parametrize("exc_type", [FakeMicrovmsClient.exceptions.ResourceNotFoundException,
+                                       FakeMicrovmsClient.exceptions.ConflictException])
+def test_microvms_terminate_swallows_expected_exceptions(exc_type):
+    client = FakeMicrovmsClient(terminate_raises=exc_type("gone"))
+    vms = MicroVMs(client, "eu-west-1")
+    vms.terminate("mvm-1")  # must not raise
+    assert client.terminate_calls == ["mvm-1"]
+
+
+def test_microvms_auth_headers_returns_a_dict():
+    client = FakeMicrovmsClient()
+    vms = MicroVMs(client, "eu-west-1")
+    headers = vms.auth_headers("mvm-1")
+    assert headers == {"X-aws-proxy-auth": "tok"}
+    assert isinstance(headers, dict)
 
 
 def test_http_json_ok_error_and_network_failure():

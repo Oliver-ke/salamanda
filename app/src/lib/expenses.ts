@@ -66,6 +66,16 @@ function validate(input: ExpenseInput): void {
   }
 }
 
+/**
+ * Returns a new array ordered newest date first; among equal dates the later-added
+ * (later in the input) comes first. Does not mutate the input.
+ */
+export function newestFirst(expenses: readonly Expense[]): Expense[] {
+  return [...expenses]
+    .reverse()
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
 /** Reads all expenses. A missing file means no expenses; malformed contents throw naming the file. */
 export async function loadExpenses(): Promise<Expense[]> {
   const file = expensesFile();

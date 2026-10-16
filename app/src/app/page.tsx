@@ -1,20 +1,23 @@
 import { loadExpenses, newestFirst } from '@/lib/expenses';
 import { formatCents } from '@/lib/format';
+import { monthTotal } from '@/lib/monthTotal';
 
 // Expenses are read from the filesystem on every request, never baked in at build time.
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
   const expenses = newestFirst(await loadExpenses());
+  const thisMonth = monthTotal(expenses, new Date());
 
   return (
     <main className="mx-auto max-w-3xl p-8">
       <h1 className="text-2xl font-semibold">Expense Tracker</h1>
       <p className="mt-1 text-neutral-600">Know where your money goes.</p>
+      <p className="mt-6 text-lg font-medium tabular-nums">This month: {formatCents(thisMonth)}</p>
       {expenses.length === 0 ? (
         <p className="mt-2 text-sm text-neutral-500">No expenses yet.</p>
       ) : (
-        <table className="mt-6 w-full text-left text-sm">
+        <table className="mt-4 w-full text-left text-sm">
           <thead className="border-b text-neutral-500">
             <tr>
               <th scope="col" className="py-2">Date</th>

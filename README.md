@@ -16,12 +16,15 @@ flowchart LR
 4. **It opens a pull request** that `Closes #N`, or comments on the issue explaining why it couldn't.
 5. **A human reviews and merges.** The merge wakes the loop for whatever became eligible.
 
-The project it builds today is an **expense tracker** (Next.js, in `app/`).
+The project it builds today is an **expense tracker** (Next.js, in `app/`). The
+[app guide](app/README.md) covers running it, using its page and API, where the data lives, and
+which features aren't built yet.
 
 ## Documentation
 
 | | |
 |---|---|
+| [Expense tracker](app/README.md) | Run and use the app; its HTTP API; features not yet implemented |
 | [Overview](docs/overview.md) | What the loop does and the ideas behind it |
 | [Architecture](docs/architecture.md) | Components, the life of a run, cadence, design choices |
 | [Writing issues](docs/issues.md) | How to feed the loop; dependencies, priority, labels |
@@ -35,6 +38,14 @@ The project it builds today is an **expense tracker** (Next.js, in `app/`).
 
 **Use the loop.** Open an issue with a clear outcome and a definition of done, then add `agent:ready`.
 Within a few minutes a PR appears, or a comment saying why not. See [Writing issues](docs/issues.md).
+
+**Run the expense tracker:**
+
+```bash
+npm ci && npm run dev --workspace app  # then open http://localhost:3000
+```
+
+See the [app guide](app/README.md) for adding expenses and the full API.
 
 **Work on this repository:**
 

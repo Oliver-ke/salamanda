@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Expense } from '@/lib/expenses';
 
 const { loadExpenses } = vi.hoisted(() => ({ loadExpenses: vi.fn<() => Promise<Expense[]>>() }));
@@ -18,6 +18,12 @@ async function renderPage() {
 beforeEach(() => {
   loadExpenses.mockReset();
   loadExpenses.mockResolvedValue([]);
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2024, 2, 20, 12, 0, 0));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('home page', () => {
@@ -63,5 +69,41 @@ describe('home page', () => {
       ['2024-03-10', 'Food', 'Lunch', '$12.50'],
       ['2024-03-01', 'Rent', '', '$999.99'],
     ]);
+  });
+
+  describe('monthly total', () => {
+    it('shows the total of only this calendar month, above the list', async () => {
+      loadExpenses.mockResolvedValue([
+        { id: 'a', amount: 1250, category: 'Food', date: '2024-03-10', note: 'Lunch' },
+        { id: 'b', amount: 10000, category: 'Rent', date: '2024-02-28', note: '' },
+        { id: 'c', amount: 11095, category: 'Travel', date: '2024-03-01', note: 'Train' },
+        { id: 'd', amount: 700, category: 'Food', date: '2023-03-15', note: 'Last year' },
+        { id: 'e', amount: 400, category: 'Food', date: '2024-04-01', note: 'Next month' },
+      ]);
+      await renderPage();
+
+      const total = screen.getByText('This month: $123.45');
+      expect(total).toBeInTheDocument();
+      const table = screen.getByRole('table');
+      expect(
+        total.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it('shows $0.00 when all expenses are from other months', async () => {
+      loadExpenses.mockResolvedValue([
+        { id: 'a', amount: 1250, category: 'Food', date: '2024-02-10', note: 'Lunch' },
+        { id: 'b', amount: 300, category: 'Transport', date: '2023-03-20', note: 'Bus' },
+      ]);
+      await renderPage();
+
+      expect(screen.getByText('This month: $0.00')).toBeInTheDocument();
+      expect(screen.getByRole('table')).toBeInTheDocument();
+    });
+
+    it('shows $0.00 when there are no expenses at all', async () => {
+      await renderPage();
+      expect(screen.getByText('This month: $0.00')).toBeInTheDocument();
+    });
   });
 });
